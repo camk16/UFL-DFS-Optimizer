@@ -117,8 +117,8 @@ with st.sidebar:
     st.markdown("""
     <div class="info-box">
     Upload your weekly CSV file containing player projections. Required columns:
-    <b>Name, Position, Team, Salary, Ownership</b><br><br>
-    Optional but recommended: <b>Projection, ETR.Val, T.Val</b>
+    <b>Player, Position, Team, Salary, Ownership</b><br><br>
+    Optional but recommended: <b>DK Points, Value, T.Val, Leverage, Pts/S, ID</b>
     </div>
     """, unsafe_allow_html=True)
 
@@ -130,13 +130,13 @@ with st.sidebar:
 
     st.markdown('<div class="section-header">⚙️ Settings</div>', unsafe_allow_html=True)
 
-    # Optimization metric
-    optimize_options = ["Projection", "ETR.Val", "T.Val"]
+    # Optimization metric — will be filtered to only show columns present in the uploaded CSV
+    ALL_OPTIMIZE_OPTIONS = ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]
     optimize_by = st.selectbox(
         "Optimize By",
-        options=optimize_options,
+        options=ALL_OPTIMIZE_OPTIONS,
         index=0,
-        help="Which metric to maximize when building lineups. Projection = fantasy points. ETR.Val and T.Val are value-based metrics from your CSV."
+        help="Which metric to maximize when building lineups. DK Points = raw projected fantasy points. Value, T.Val, Leverage, and Pts/S are advanced metrics from your CSV."
     )
 
     # Number of lineups
@@ -219,13 +219,16 @@ if uploaded_file is None:
 
     st.markdown("### 📋 Expected CSV Format")
     sample_data = pd.DataFrame({
-        "Name": ["Patrick Mahomes", "Tyreek Hill", "Travis Kelce", "Isiah Pacheco", "Rashee Rice", "Mecole Hardman", "Chiefs DST"],
+        "Player": ["Patrick Mahomes", "Tyreek Hill", "Travis Kelce", "Isiah Pacheco", "Rashee Rice", "Mecole Hardman", "Chiefs DST"],
         "Position": ["QB", "WR", "TE", "RB", "WR", "WR", "DST"],
         "Team": ["KC", "KC", "KC", "KC", "KC", "KC", "KC"],
         "Salary": [8400, 7600, 6800, 6200, 5800, 4200, 3200],
-        "Projection": [28.4, 22.1, 14.3, 16.8, 12.4, 8.2, 9.1],
+        "DK Points": [28.4, 22.1, 14.3, 16.8, 12.4, 8.2, 9.1],
+        "Value": [3.38, 2.91, 2.10, 2.71, 2.14, 1.95, 2.84],
         "Ownership": [28.5, 18.2, 14.1, 22.3, 15.6, 8.4, 12.0],
-        "ETR.Val": [1.2, 0.9, 0.6, 1.1, 0.7, 0.5, 0.4],
+        "ID": [11191729, 11192543, 11192100, 11193021, 11192876, 11193154, 11190044],
+        "Leverage": [1.2, 0.9, 0.6, 1.1, 0.7, 0.5, 0.4],
+        "Pts/S": [3.38, 2.91, 2.10, 2.71, 2.14, 1.95, 2.84],
         "T.Val": [3.4, 2.8, 1.9, 2.6, 1.8, 1.2, 1.0],
     })
     st.dataframe(sample_data, use_container_width=True, hide_index=True)
@@ -238,7 +241,8 @@ else:
         df = clean_dataframe(raw_df)
 
         # Detect available optimization columns
-        available_opts = [c for c in ["Projection", "ETR.Val", "T.Val"] if c in df.columns]
+        ALL_OPTIMIZE_OPTIONS = ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]
+        available_opts = [c for c in ALL_OPTIMIZE_OPTIONS if c in df.columns]
         if optimize_by not in available_opts:
             st.warning(f"⚠️ '{optimize_by}' column not found in your CSV. Available options: {available_opts}. Please select a different metric in the sidebar.")
             st.stop()
@@ -274,10 +278,12 @@ else:
     display_df = df if not pos_filter else df[df["Position"].isin(pos_filter)]
 
     # Show columns that exist
-    show_cols = ["Name", "Position", "Team", "Salary", "Ownership"]
-    for opt_col in ["Projection", "ETR.Val", "T.Val"]:
+    show_cols = ["Player", "Position", "Team", "Salary", "Ownership"]
+    for opt_col in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
         if opt_col in df.columns:
             show_cols.append(opt_col)
+    if "ID" in df.columns:
+        show_cols.append("ID")
 
     st.dataframe(
         display_df[show_cols].sort_values("Salary", ascending=False),
@@ -294,7 +300,7 @@ else:
         st.markdown("**Lock Players** — Force into every lineup")
         locked = st.multiselect(
             "Select players to lock",
-            options=sorted(df["Name"].tolist()),
+            options=sorted(df["Player"].tolist()),
             default=[],
             help="These players will appear in every lineup generated."
         )
@@ -303,7 +309,7 @@ else:
         st.markdown("**Exclude Players** — Remove from all lineups")
         excluded = st.multiselect(
             "Select players to exclude",
-            options=sorted(df["Name"].tolist()),
+            options=sorted(df["Player"].tolist()),
             default=[],
             help="These players will never appear in any lineup."
         )
@@ -320,7 +326,7 @@ else:
 
         exp_player = st.multiselect(
             "Set max exposure for specific players",
-            options=sorted(df["Name"].tolist()),
+            options=sorted(df["Player"].tolist()),
             default=[],
         )
 
