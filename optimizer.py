@@ -277,56 +277,49 @@ def optimize_lineups(
 def format_lineup(players_df, lineup_num, optimize_by):
     """Assign players to their roster slots and return a dict representing the lineup."""
 
-    # Sort into slots
-    slot_order = []
-
     # QB
     qb = players_df[players_df["Position"] == "QB"].iloc[0]
-    slot_order.append(("QB", qb))
 
     # DST
     dst = players_df[players_df["Position"].isin(["DST", "D", "DEF"])].iloc[0]
 
     # Skill players
     skill = players_df[players_df["Position"].isin(["RB", "WR", "TE"])].copy()
-
     rb_players = skill[skill["Position"] == "RB"]
     wrte_players = skill[skill["Position"].isin(["WR", "TE"])]
 
-    # Assign RB slot (1 RB)
+    # Assign RB slot (1 RB), rest go to FLEX
     rb_slot = rb_players.iloc[0]
-    slot_order.append(("RB", rb_slot))
     remaining_rbs = rb_players.iloc[1:] if len(rb_players) > 1 else pd.DataFrame()
 
-    # Assign WR/TE slots (2 players)
+    # Assign WR/TE slots (first 2), rest go to FLEX
     wrte_list = wrte_players.to_dict("records")
-    remaining_wrtes = []
-    wt_assigned = 0
-    for p in wrte_list:
-        if wt_assigned < 2:
-            slot_order.append(("WR/TE", pd.Series(p)))
-            wt_assigned += 1
-        else:
-            remaining_wrtes.append(p)
+    wrte_slot_1 = pd.Series(wrte_list[0]) if len(wrte_list) > 0 else None
+    wrte_slot_2 = pd.Series(wrte_list[1]) if len(wrte_list) > 1 else None
+    remaining_wrtes = [pd.Series(p) for p in wrte_list[2:]]
 
-    # Assign FLEX slots (2 players from remaining RBs and WR/TEs)
-    flex_pool = list(remaining_rbs.to_dict("records")) + remaining_wrtes
-    for p in flex_pool[:2]:
-        slot_order.append(("FLEX", pd.Series(p)))
+    # FLEX pool: remaining RBs + remaining WR/TEs
+    flex_pool = list(remaining_rbs.to_dict("records")) + [p.to_dict() for p in remaining_wrtes]
+    flex_1 = pd.Series(flex_pool[0]) if len(flex_pool) > 0 else None
+    flex_2 = pd.Series(flex_pool[1]) if len(flex_pool) > 1 else None
 
-    slot_order.append(("DST", dst))
-
-    # Build output row
-    row = {"Lineup #": lineup_num}
-    for slot, player in slot_order:
-        row[slot] = player["Player"]
+    # Build output row with explicitly named columns (no duplicate keys)
+    row = {
+        "Lineup #": lineup_num,
+        "QB":       qb["Player"],
+        "RB":       rb_slot["Player"],
+        "WR/TE 1":  wrte_slot_1["Player"] if wrte_slot_1 is not None else "",
+        "WR/TE 2":  wrte_slot_2["Player"] if wrte_slot_2 is not None else "",
+        "FLEX 1":   flex_1["Player"] if flex_1 is not None else "",
+        "FLEX 2":   flex_2["Player"] if flex_2 is not None else "",
+        "DST":      dst["Player"],
+    }
 
     # Totals
-    all_players = players_df
-    row["Total Salary"] = all_players["Salary"].sum()
-    row["Salary Remaining"] = SALARY_CAP - row["Total Salary"]
-    row[f"Total {optimize_by}"] = round(all_players[optimize_by].sum(), 2)
-    row["Total Ownership"] = round(all_players["Ownership"].sum(), 1)
+    row["Total Salary"]          = players_df["Salary"].sum()
+    row["Salary Remaining"]      = SALARY_CAP - row["Total Salary"]
+    row[f"Total {optimize_by}"]  = round(players_df[optimize_by].sum(), 2)
+    row["Total Ownership"]       = round(players_df["Ownership"].sum(), 1)
 
     return row
 
@@ -334,33 +327,28 @@ def format_lineup(players_df, lineup_num, optimize_by):
 def lineups_to_dk_export(lineups_df, player_pool_df):
     """
     Convert lineups dataframe to DraftKings upload format.
-    DK expects: QB,RB,WR/TE,WR/TE,FLEX,FLEX,DST
-    Each cell should contain the player's DK ID or Name+Team format.
+    DK upload expects columns: QB, RB, WR/TE, WR/TE, FLEX, FLEX, DST
+    Uses player ID if available, otherwise player name.
     """
+    # Build a name -> ID lookup if the ID column exists
+    id_lookup = {}
+    if "ID" in player_pool_df.columns:
+        id_lookup = dict(zip(player_pool_df["Player"], player_pool_df["ID"].astype(str)))
+
+    def resolve(name):
+        """Return ID if available, otherwise the player name."""
+        return id_lookup.get(name, name) if name else ""
+
     export_rows = []
-    slot_cols = ["QB", "RB", "WR/TE", "WR/TE", "FLEX", "FLEX", "DST"]
-
-    # Create name lookup for DK ID if available
-    has_id = "ID" in player_pool_df.columns
-
     for _, row in lineups_df.iterrows():
-        export_row = {}
-        wrte_count = 0
-        flex_count = 0
+        export_rows.append({
+            "QB":     resolve(row.get("QB", "")),
+            "RB":     resolve(row.get("RB", "")),
+            "WR/TE":  resolve(row.get("WR/TE 1", "")),
+            "WR/TE.1": resolve(row.get("WR/TE 2", "")),
+            "FLEX":   resolve(row.get("FLEX 1", "")),
+            "FLEX.1": resolve(row.get("FLEX 2", "")),
+            "DST":    resolve(row.get("DST", "")),
+        })
 
-        for col in lineups_df.columns:
-            if col in ["QB", "RB", "DST"]:
-                export_row[col] = row[col]
-            elif col == "WR/TE":
-                # Handle duplicate column names
-                pass
-
-        # Rebuild from slot order
-        dk_row = []
-        for slot in ["QB", "RB", "WR/TE", "FLEX", "DST"]:
-            if slot in row:
-                dk_row.append(row[slot])
-
-        export_rows.append(dk_row)
-
-    return pd.DataFrame(export_rows, columns=["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"])
+    return pd.DataFrame(export_rows)
