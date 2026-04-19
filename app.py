@@ -425,10 +425,10 @@ else:
                 )
 
             # DK-formatted export
-            slot_cols = ["QB", "RB", "WR/TE", "FLEX", "DST"]
-            dk_cols = [c for c in results_df.columns if c in ["QB", "RB", "WR/TE", "FLEX", "DST"]]
-            if dk_cols:
-                dk_df = results_df[dk_cols]
+            dk_cols = ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"]
+            available_dk_cols = [c for c in dk_cols if c in results_df.columns]
+            if available_dk_cols:
+                dk_df = results_df[available_dk_cols]
                 csv_dk = dk_df.to_csv(index=False)
                 with dl_col2:
                     st.download_button(
