@@ -17,7 +17,7 @@ SALARY_CAP = 50000
 
 def validate_csv(df):
     """Check that all required columns are present in the uploaded CSV."""
-    required_columns = ["Name", "Position", "Team", "Salary", "Ownership"]
+    required_columns = ["Player", "Position", "Team", "Salary", "Ownership"]
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         raise ValueError(f"Your CSV is missing these required columns: {', '.join(missing)}")
@@ -42,8 +42,8 @@ def clean_dataframe(df):
     df["Ownership"] = df["Ownership"].astype(str).str.replace('%', '', regex=False)
     df["Ownership"] = pd.to_numeric(df["Ownership"], errors="coerce").fillna(0).astype(float)
 
-    # Clean projection columns if present
-    for col in ["Projection", "ETR.Val", "T.Val"]:
+    # Clean all numeric optimization columns if present
+    for col in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(float)
 
@@ -131,11 +131,11 @@ def optimize_lineups(
         raise ValueError(f"Optimization column '{optimize_by}' not found in your CSV.")
 
     # Filter out excluded players
-    pool = df[~df["Name"].isin(excluded_players)].copy().reset_index(drop=True)
+    pool = df[~df["Player"].isin(excluded_players)].copy().reset_index(drop=True)
 
     # Validate locked players exist
     for p in locked_players:
-        if p not in pool["Name"].values:
+        if p not in pool["Player"].values:
             raise ValueError(f"Locked player '{p}' not found in player pool (they may be excluded or missing).")
 
     generated_lineups = []
@@ -143,7 +143,7 @@ def optimize_lineups(
     previous_lineups = []
 
     # Track per-player lineup count for exposure constraints
-    player_lineup_count = {name: 0 for name in pool["Name"]}
+    player_lineup_count = {name: 0 for name in pool["Player"]}
 
     for lineup_num in range(num_lineups):
         prob = pulp.LpProblem(f"UFL_DFS_Lineup_{lineup_num}", pulp.LpMaximize)
@@ -208,7 +208,7 @@ def optimize_lineups(
 
         # --- Locked Players ---
         for name in locked_players:
-            idx = pool[pool["Name"] == name].index
+            idx = pool[pool["Player"] == name].index
             if len(idx) > 0:
                 prob += x[idx[0]] == 1
 
@@ -246,7 +246,7 @@ def optimize_lineups(
         # Max exposure: if player has already hit their max, exclude them
         for name, max_count in max_exposure.items():
             if player_lineup_count.get(name, 0) >= max_count:
-                idx = pool[pool["Name"] == name].index
+                idx = pool[pool["Player"] == name].index
                 if len(idx) > 0:
                     prob += x[idx[0]] == 0
 
@@ -264,7 +264,7 @@ def optimize_lineups(
 
         # Update tracking
         previous_lineups.append(selected_indices)
-        for name in selected_players["Name"].values:
+        for name in selected_players["Player"].values:
             player_lineup_count[name] = player_lineup_count.get(name, 0) + 1
 
         # Format the lineup for output
@@ -319,7 +319,7 @@ def format_lineup(players_df, lineup_num, optimize_by):
     # Build output row
     row = {"Lineup #": lineup_num}
     for slot, player in slot_order:
-        row[slot] = player["Name"]
+        row[slot] = player["Player"]
 
     # Totals
     all_players = players_df
