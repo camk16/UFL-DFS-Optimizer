@@ -16,68 +16,245 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Session State Initialisation ──────────────────────────────────────────────
-# st.session_state is Streamlit's built-in memory. It keeps data alive across
-# page interactions within the same browser session — no database needed.
+# ── Session State ─────────────────────────────────────────────────────────────
 if "saved_lineups" not in st.session_state:
-    st.session_state.saved_lineups = []   # list of lineup row dicts
+    st.session_state.saved_lineups = []
 if "last_results" not in st.session_state:
-    st.session_state.last_results = []    # most recently generated lineups
+    st.session_state.last_results = []
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600&display=swap');
-
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
     .main-title {
         font-family: 'Bebas Neue', sans-serif;
-        font-size: 3.2rem;
-        letter-spacing: 0.08em;
-        color: #00C2FF;
-        line-height: 1;
-        margin-bottom: 0;
+        font-size: 3.2rem; letter-spacing: 0.08em;
+        color: #00C2FF; line-height: 1; margin-bottom: 0;
     }
     .sub-title {
-        font-size: 0.9rem;
-        color: #888;
-        letter-spacing: 0.15em;
-        text-transform: uppercase;
-        margin-top: 0.2rem;
-        margin-bottom: 1.5rem;
+        font-size: 0.9rem; color: #888;
+        letter-spacing: 0.15em; text-transform: uppercase;
+        margin-top: 0.2rem; margin-bottom: 1.5rem;
     }
     .section-header {
         font-family: 'Bebas Neue', sans-serif;
-        font-size: 1.4rem;
-        letter-spacing: 0.06em;
-        color: #00C2FF;
+        font-size: 1.4rem; letter-spacing: 0.06em; color: #00C2FF;
         border-bottom: 1px solid #333;
-        padding-bottom: 0.3rem;
-        margin-top: 1.2rem;
-        margin-bottom: 0.8rem;
+        padding-bottom: 0.3rem; margin-top: 1.2rem; margin-bottom: 0.8rem;
     }
     .info-box {
-        background: #1a1a2e;
-        border-left: 3px solid #00C2FF;
-        padding: 0.8rem 1rem;
-        border-radius: 0 6px 6px 0;
-        font-size: 0.85rem;
-        color: #ccc;
-        margin-bottom: 1rem;
+        background: #1a1a2e; border-left: 3px solid #00C2FF;
+        padding: 0.8rem 1rem; border-radius: 0 6px 6px 0;
+        font-size: 0.85rem; color: #ccc; margin-bottom: 1rem;
     }
     .success-banner {
-        background: #052e16;
-        border: 1px solid #16a34a;
-        border-radius: 6px;
-        padding: 0.8rem 1rem;
-        color: #4ade80;
-        font-weight: 500;
-        margin: 1rem 0;
+        background: #052e16; border: 1px solid #16a34a;
+        border-radius: 6px; padding: 0.8rem 1rem;
+        color: #4ade80; font-weight: 500; margin: 1rem 0;
     }
     div[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
+
+    /* ── Lineup Card Grid ── */
+    .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 1.5rem;
+    }
+    .lineup-card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+        overflow: hidden;
+        font-size: 0.78rem;
+    }
+    .card-header {
+        background: #0f172a;
+        border-bottom: 1px solid #1f2937;
+        padding: 7px 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .card-header-num {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1rem; letter-spacing: 0.05em; color: #00C2FF;
+    }
+    .card-header-score {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.15rem; color: #f0f0f0; letter-spacing: 0.03em;
+    }
+    .card-header-meta {
+        font-size: 0.7rem; color: #6b7280; text-align: right; line-height: 1.4;
+    }
+    .card-header-meta span { color: #9ca3af; }
+    .card-body { padding: 0; }
+    .player-row {
+        display: flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-bottom: 1px solid #1a2235;
+        gap: 7px;
+    }
+    .player-row:last-child { border-bottom: none; }
+    .player-row:hover { background: #1a2535; }
+    .pos-badge {
+        font-size: 0.62rem; font-weight: 700;
+        padding: 1px 5px; border-radius: 3px;
+        min-width: 36px; text-align: center;
+        letter-spacing: 0.04em; flex-shrink: 0;
+    }
+    .pos-QB  { background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed44; }
+    .pos-RB  { background: #06522422; color: #34d399; border: 1px solid #06522444; }
+    .pos-WRTE { background: #0c4a6e22; color: #38bdf8; border: 1px solid #0c4a6e44; }
+    .pos-FLEX { background: #78350f22; color: #fbbf24; border: 1px solid #78350f44; }
+    .pos-DST { background: #7f1d1d22; color: #f87171; border: 1px solid #7f1d1d44; }
+    .player-team {
+        font-size: 0.65rem; color: #6b7280;
+        min-width: 28px; flex-shrink: 0;
+        font-weight: 600; letter-spacing: 0.04em;
+    }
+    .player-name {
+        flex: 1; color: #e5e7eb;
+        font-weight: 500; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
+    }
+    .player-sal  { color: #6b7280; min-width: 38px; text-align: right; flex-shrink: 0; }
+    .player-proj { color: #9ca3af; min-width: 32px; text-align: right; flex-shrink: 0; }
+    .player-own  { color: #4b5563; min-width: 34px; text-align: right; flex-shrink: 0; font-size: 0.68rem; }
+    .card-saved-badge {
+        background: #052e16; color: #4ade80;
+        font-size: 0.65rem; padding: 1px 6px;
+        border-radius: 3px; border: 1px solid #16a34a;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+SLOT_COLS = ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"]
+
+SLOT_DISPLAY = {
+    "QB":      ("QB",   "pos-QB"),
+    "RB":      ("RB",   "pos-RB"),
+    "WR/TE 1": ("WR/TE","pos-WRTE"),
+    "WR/TE 2": ("WR/TE","pos-WRTE"),
+    "FLEX 1":  ("FLEX", "pos-FLEX"),
+    "FLEX 2":  ("FLEX", "pos-FLEX"),
+    "DST":     ("DST",  "pos-DST"),
+}
+
+
+def build_player_lookup(df):
+    """Return dict: player_name -> {Team, DK Points/etc, Ownership, Salary}"""
+    lookup = {}
+    if df is None:
+        return lookup
+    for _, r in df.iterrows():
+        lookup[r["Player"]] = r.to_dict()
+    return lookup
+
+
+def format_salary(val):
+    try:
+        return f"${int(val):,}"
+    except Exception:
+        return str(val)
+
+
+def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
+                        show_save_buttons=True, id_prefix="gen"):
+    """
+    Render lineups as a 4-column card grid using st.markdown (HTML).
+    Save buttons are rendered separately via st.columns because Streamlit
+    buttons cannot live inside st.markdown HTML blocks.
+    """
+    score_col = f"Total {optimize_by}"
+
+    # We render cards in rows of 4
+    cards_per_row = 4
+    rows = [lineups[i:i+cards_per_row] for i in range(0, len(lineups), cards_per_row)]
+
+    for row_lineups in rows:
+        cols = st.columns(cards_per_row)
+
+        for col_idx, lineup in enumerate(row_lineups):
+            lineup_num = lineup.get("Lineup #", "?")
+            already_saved = lineup_num in saved_set
+
+            total_score = lineup.get(score_col, 0)
+            total_sal   = lineup.get("Total Salary", 0)
+            sal_rem     = lineup.get("Salary Remaining", SALARY_CAP - total_sal)
+            total_own   = lineup.get("Total Ownership", 0)
+
+            # Build player rows HTML
+            player_rows_html = ""
+            for slot in SLOT_COLS:
+                player_name = lineup.get(slot, "")
+                if not player_name:
+                    continue
+
+                label, badge_class = SLOT_DISPLAY.get(slot, (slot, "pos-QB"))
+                pdata = player_lookup.get(player_name, {})
+                team  = pdata.get("Team", "")
+                sal   = format_salary(pdata.get("Salary", ""))
+                proj  = pdata.get(optimize_by, "")
+                proj  = f"{proj:.1f}" if isinstance(proj, float) else str(proj)
+                own   = pdata.get("Ownership", "")
+                own   = f"{own:.1f}%" if isinstance(own, (int, float)) else str(own)
+
+                player_rows_html += f"""
+                <div class="player-row">
+                    <span class="pos-badge {badge_class}">{label}</span>
+                    <span class="player-team">{team}</span>
+                    <span class="player-name">{player_name}</span>
+                    <span class="player-sal">{sal}</span>
+                    <span class="player-proj">{proj}</span>
+                    <span class="player-own">{own}</span>
+                </div>"""
+
+            saved_badge = '<span class="card-saved-badge">✓ Saved</span>' if already_saved else ""
+
+            card_html = f"""
+            <div class="lineup-card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-header-num">Lineup #{lineup_num} {saved_badge}</div>
+                        <div class="card-header-score">{total_score:.2f} pts</div>
+                    </div>
+                    <div class="card-header-meta">
+                        <div>Salary <span>{format_salary(total_sal)}</span></div>
+                        <div>Remaining <span>{format_salary(sal_rem)}</span></div>
+                        <div>Own <span>{total_own:.1f}%</span></div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    {player_rows_html}
+                </div>
+            </div>"""
+
+            with cols[col_idx]:
+                st.markdown(card_html, unsafe_allow_html=True)
+
+                if show_save_buttons:
+                    if already_saved:
+                        st.markdown(
+                            "<div style='text-align:center; color:#4ade80; font-size:0.75rem; margin-top:4px;'>✅ Saved</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        if st.button("💾 Save Lineup", key=f"{id_prefix}_save_{lineup_num}"):
+                            st.session_state.saved_lineups.append(lineup)
+                            st.rerun()
+
+        # Fill empty columns in last row
+        for empty_idx in range(len(row_lineups), cards_per_row):
+            with cols[empty_idx]:
+                st.empty()
+
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown('<div class="main-title">🏈 UFL DFS OPTIMIZER</div>', unsafe_allow_html=True)
@@ -110,41 +287,30 @@ with st.sidebar:
     num_lineups = st.number_input(
         "Number of Lineups to Generate",
         min_value=1, max_value=150, value=1, step=1,
-        help="How many unique lineups to generate per run."
     )
 
     st.markdown('<div class="section-header">💰 Salary</div>', unsafe_allow_html=True)
     min_salary = st.number_input(
         "Minimum Salary Used ($)",
         min_value=40000, max_value=SALARY_CAP, value=49000, step=100,
-        help="Optimizer must spend at least this much."
     )
 
     st.markdown('<div class="section-header">👥 Ownership</div>', unsafe_allow_html=True)
-    use_max_ownership = st.checkbox(
-        "Cap Cumulative Ownership", value=False,
-        help="Avoid stacking high-ownership players. Good for GPP differentiation."
-    )
+    use_max_ownership = st.checkbox("Cap Cumulative Ownership", value=False)
     max_ownership = None
     if use_max_ownership:
         max_ownership = st.slider(
             "Max Total Ownership %", min_value=100, max_value=500, value=250, step=10,
-            help="Sum of all 7 players' ownership % must stay under this value."
         )
 
     st.markdown('<div class="section-header">🏟️ Team Limits</div>', unsafe_allow_html=True)
-    max_per_team = st.slider(
-        "Max Players From One Team", min_value=1, max_value=5, value=4, step=1,
-    )
+    max_per_team = st.slider("Max Players From One Team", min_value=1, max_value=5, value=4, step=1)
 
     st.markdown('<div class="section-header">🔗 QB Stack</div>', unsafe_allow_html=True)
     force_stack = st.checkbox("Force QB + WR/TE Stack", value=False)
     stack_count = 1
     if force_stack:
-        stack_count = st.radio(
-            "WR/TE Stackmates Required", options=[1, 2], index=0,
-            help="1 = single stack, 2 = double stack."
-        )
+        stack_count = st.radio("WR/TE Stackmates Required", options=[1, 2], index=0)
 
     st.markdown("---")
     saved_count = len(st.session_state.saved_lineups)
@@ -176,18 +342,17 @@ with tab_optimizer:
         st.markdown("### 📋 Expected CSV Format")
         sample_data = pd.DataFrame({
             "Player":   ["Patrick Mahomes", "Tyreek Hill", "Travis Kelce",
-                         "Isiah Pacheco",   "Rashee Rice", "Mecole Hardman", "Chiefs DST"],
+                         "Isiah Pacheco", "Rashee Rice", "Mecole Hardman", "Chiefs DST"],
             "Position": ["QB", "WR", "TE", "RB", "WR", "WR", "DST"],
             "Team":     ["KC"] * 7,
             "Salary":   [8400, 7600, 6800, 6200, 5800, 4200, 3200],
-            "DK Points":[28.4, 22.1, 14.3, 16.8, 12.4,  8.2,  9.1],
+            "DK Points":[28.4, 22.1, 14.3, 16.8, 12.4, 8.2, 9.1],
             "Value":    [3.38, 2.91, 2.10, 2.71, 2.14, 1.95, 2.84],
-            "Ownership":[28.5, 18.2, 14.1, 22.3, 15.6,  8.4, 12.0],
-            "ID":       [11191729, 11192543, 11192100, 11193021,
-                         11192876, 11193154, 11190044],
+            "Ownership":[28.5, 18.2, 14.1, 22.3, 15.6, 8.4, 12.0],
+            "ID":       [11191729, 11192543, 11192100, 11193021, 11192876, 11193154, 11190044],
             "Leverage": [1.2, 0.9, 0.6, 1.1, 0.7, 0.5, 0.4],
             "Pts/S":    [3.38, 2.91, 2.10, 2.71, 2.14, 1.95, 2.84],
-            "T.Val":    [3.4,  2.8,  1.9,  2.6,  1.8,  1.2,  1.0],
+            "T.Val":    [3.4, 2.8, 1.9, 2.6, 1.8, 1.2, 1.0],
         })
         st.dataframe(sample_data, use_container_width=True, hide_index=True)
 
@@ -197,6 +362,7 @@ with tab_optimizer:
             raw_df = pd.read_csv(uploaded_file)
             validate_csv(raw_df)
             df = clean_dataframe(raw_df)
+            player_lookup = build_player_lookup(df)
 
             available_opts = [c for c in ALL_OPTIMIZE_OPTIONS if c in df.columns]
             if optimize_by not in available_opts:
@@ -242,17 +408,12 @@ with tab_optimizer:
         # ── Lock / Exclude ────────────────────────────────────────────────────
         st.markdown('<div class="section-header">🔒 Lock & Exclude Players</div>', unsafe_allow_html=True)
         col_lock, col_excl = st.columns(2)
-
         with col_lock:
             st.markdown("**Lock Players** — Force into every lineup")
-            locked = st.multiselect(
-                "Select players to lock", options=sorted(df["Player"].tolist()), default=[],
-            )
+            locked = st.multiselect("Select players to lock", options=sorted(df["Player"].tolist()), default=[])
         with col_excl:
             st.markdown("**Exclude Players** — Remove from all lineups")
-            excluded = st.multiselect(
-                "Select players to exclude", options=sorted(df["Player"].tolist()), default=[],
-            )
+            excluded = st.multiselect("Select players to exclude", options=sorted(df["Player"].tolist()), default=[])
 
         # ── Exposure Limits ───────────────────────────────────────────────────
         max_exposure_dict = {}
@@ -275,7 +436,7 @@ with tab_optimizer:
                 )
                 max_exposure_dict[p] = max(1, int((pct / 100) * num_lineups))
 
-        # ── Generate Button ───────────────────────────────────────────────────
+        # ── Generate ──────────────────────────────────────────────────────────
         st.markdown("---")
         gen_col, _ = st.columns([1, 2])
         with gen_col:
@@ -304,12 +465,10 @@ with tab_optimizer:
                 except Exception as e:
                     st.error(f"❌ Unexpected error: {e}")
                     st.stop()
-
             st.session_state.last_results = results
 
-        # ── Show Results ──────────────────────────────────────────────────────
+        # ── Results ───────────────────────────────────────────────────────────
         results = st.session_state.last_results
-
         if results:
             results_df = pd.DataFrame(results)
             actual = len(results_df)
@@ -317,33 +476,18 @@ with tab_optimizer:
             st.markdown('<div class="section-header">📋 Generated Lineups</div>', unsafe_allow_html=True)
             st.markdown("""
             <div class="info-box">
-            Click <b>💾 Save</b> next to any lineup to add it to your Saved Lineups tab
-            for comparison and exposure tracking.
+            Each card shows <b>Position · Team · Player · Salary · Projection · Ownership</b>.
+            Click <b>💾 Save Lineup</b> under any card to add it to your Saved Lineups tab.
             </div>
             """, unsafe_allow_html=True)
 
-            # Set of already-saved lineup numbers to avoid duplicate saves
-            saved_lineup_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
-
-            for _, row in results_df.iterrows():
-                lineup_num = row["Lineup #"]
-                already_saved = lineup_num in saved_lineup_nums
-
-                row_col, btn_col = st.columns([7, 1])
-                with row_col:
-                    st.dataframe(
-                        pd.DataFrame([row]),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-                with btn_col:
-                    st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-                    if already_saved:
-                        st.success("✅")
-                    else:
-                        if st.button("💾 Save", key=f"save_{lineup_num}"):
-                            st.session_state.saved_lineups.append(row.to_dict())
-                            st.rerun()
+            saved_set = {r.get("Lineup #") for r in st.session_state.saved_lineups}
+            render_lineup_cards(
+                results, player_lookup, optimize_by,
+                saved_set=saved_set,
+                show_save_buttons=True,
+                id_prefix="gen",
+            )
 
             # ── Summary ───────────────────────────────────────────────────────
             st.markdown('<div class="section-header">📊 Summary</div>', unsafe_allow_html=True)
@@ -351,21 +495,18 @@ with tab_optimizer:
             s1, s2, s3, s4 = st.columns(4)
             s1.metric("Lineups Generated", actual)
             s2.metric(f"Avg {optimize_by}", round(results_df[score_col].mean(), 2))
-            s3.metric("Avg Ownership %",    round(results_df["Total Ownership"].mean(), 1))
-            s4.metric("Avg Salary Used",    f"${int(results_df['Total Salary'].mean()):,}")
+            s3.metric("Avg Ownership %", round(results_df["Total Ownership"].mean(), 1))
+            s4.metric("Avg Salary Used", f"${int(results_df['Total Salary'].mean()):,}")
 
             # ── Downloads ─────────────────────────────────────────────────────
             st.markdown('<div class="section-header">⬇️ Download</div>', unsafe_allow_html=True)
             dl1, dl2 = st.columns(2)
-
             with dl1:
                 st.download_button(
                     "📥 Download Full Results (CSV)",
                     data=results_df.to_csv(index=False),
-                    file_name="ufl_lineups_full.csv",
-                    mime="text/csv",
+                    file_name="ufl_lineups_full.csv", mime="text/csv",
                 )
-
             dk_slot_cols = ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"]
             avail_dk = [c for c in dk_slot_cols if c in results_df.columns]
             if avail_dk:
@@ -373,8 +514,7 @@ with tab_optimizer:
                     st.download_button(
                         "📥 Download DraftKings Upload Format",
                         data=results_df[avail_dk].to_csv(index=False),
-                        file_name="ufl_lineups_dk.csv",
-                        mime="text/csv",
+                        file_name="ufl_lineups_dk.csv", mime="text/csv",
                     )
 
 
@@ -389,8 +529,8 @@ with tab_saved:
         st.markdown("""
         <div class="info-box" style="font-size:1rem; padding:1.5rem;">
         💾 <b>No lineups saved yet.</b><br><br>
-        Generate lineups in the <b>Optimizer</b> tab, then click <b>💾 Save</b>
-        next to any lineup you want to keep here for comparison.
+        Generate lineups in the <b>Optimizer</b> tab, then click <b>💾 Save Lineup</b>
+        under any card to add it here for comparison.
         </div>
         """, unsafe_allow_html=True)
 
@@ -403,17 +543,31 @@ with tab_saved:
             unsafe_allow_html=True,
         )
 
-        # ── Saved Lineups Table ───────────────────────────────────────────────
+        # Work out which optimize_by column to use for the cards
+        # (fall back gracefully if no CSV is uploaded on this session)
+        score_col_candidates = [c for c in saved_df.columns if c.startswith("Total ") and c != "Total Salary" and c != "Total Ownership"]
+        card_optimize_by = score_col_candidates[0].replace("Total ", "") if score_col_candidates else "DK Points"
+
+        # Player lookup — use uploaded CSV if available, else empty
+        card_player_lookup = player_lookup if uploaded_file is not None else {}
+
+        # ── Saved Lineup Cards ────────────────────────────────────────────────
         st.markdown('<div class="section-header">📋 Saved Lineups</div>', unsafe_allow_html=True)
 
-        display_saved = saved_df.copy()
-        display_saved.insert(0, "#", range(1, total_saved + 1))
-        st.dataframe(display_saved, use_container_width=True, hide_index=True)
+        # No save buttons on the saved tab — show remove instead
+        # Render cards without save buttons
+        saved_set_all = {r.get("Lineup #") for r in saved}
+        render_lineup_cards(
+            saved, card_player_lookup, card_optimize_by,
+            saved_set=saved_set_all,
+            show_save_buttons=False,
+            id_prefix="saved",
+        )
 
         # ── Remove a Lineup ───────────────────────────────────────────────────
-        st.markdown("**Remove a saved lineup:**")
+        st.markdown('<div class="section-header">🗑️ Remove a Lineup</div>', unsafe_allow_html=True)
         remove_options = {
-            f"#{i+1} — QB: {r.get('QB','?')} | Salary: ${r.get('Total Salary', 0):,}": i
+            f"#{i+1} — QB: {r.get('QB','?')} | ${r.get('Total Salary', 0):,}": i
             for i, r in enumerate(saved)
         }
         remove_label = st.selectbox("Select lineup to remove", ["— select —"] + list(remove_options.keys()))
@@ -428,41 +582,29 @@ with tab_saved:
         st.markdown("""
         <div class="info-box">
         How often each player appears across all your saved lineups.<br>
-        <b>Lineups</b> = raw count &nbsp;|&nbsp; <b>Exposure %</b> = share of your saved lineup pool.
+        <b># Lineups</b> = raw count &nbsp;|&nbsp;
+        <b>Exposure %</b> = share of your saved lineup pool.
         </div>
         """, unsafe_allow_html=True)
 
-        slot_cols = ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"]
-        present_slots = [c for c in slot_cols if c in saved_df.columns]
-
-        # Flatten every player name from every slot into one list
+        present_slots = [c for c in SLOT_COLS if c in saved_df.columns]
         all_appearances = []
         for col in present_slots:
             all_appearances.extend(saved_df[col].dropna().tolist())
 
         counts = Counter(all_appearances)
-
         exposure_df = pd.DataFrame([
-            {
-                "Player":     player,
-                "Lineups":    count,
-                "Exposure %": round(count / total_saved * 100, 1),
-            }
-            for player, count in sorted(counts.items(), key=lambda x: -x[1])
+            {"Player": p, "Lineups": c, "Exposure %": round(c / total_saved * 100, 1)}
+            for p, c in sorted(counts.items(), key=lambda x: -x[1])
         ])
 
         st.dataframe(
             exposure_df,
-            use_container_width=True,
-            hide_index=True,
+            use_container_width=True, hide_index=True,
             column_config={
                 "Lineups": st.column_config.NumberColumn("# Lineups"),
                 "Exposure %": st.column_config.ProgressColumn(
-                    "Exposure %",
-                    help="Percentage of saved lineups this player appears in",
-                    format="%.1f%%",
-                    min_value=0,
-                    max_value=100,
+                    "Exposure %", format="%.1f%%", min_value=0, max_value=100,
                 ),
             },
         )
@@ -475,17 +617,14 @@ with tab_saved:
             st.download_button(
                 "📥 Download Saved Lineups (CSV)",
                 data=saved_df.to_csv(index=False),
-                file_name="ufl_saved_lineups.csv",
-                mime="text/csv",
+                file_name="ufl_saved_lineups.csv", mime="text/csv",
             )
 
-        dk_slot_cols = ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"]
-        avail_dk = [c for c in dk_slot_cols if c in saved_df.columns]
+        avail_dk = [c for c in ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"] if c in saved_df.columns]
         if avail_dk:
             with dl_b:
                 st.download_button(
                     "📥 Download DraftKings Upload Format",
                     data=saved_df[avail_dk].to_csv(index=False),
-                    file_name="ufl_saved_lineups_dk.csv",
-                    mime="text/csv",
+                    file_name="ufl_saved_lineups_dk.csv", mime="text/csv",
                 )
