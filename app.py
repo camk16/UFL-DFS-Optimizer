@@ -168,92 +168,180 @@ def format_salary(val):
 def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                         show_save_buttons=True, id_prefix="gen"):
     """
-    Render lineups as a 4-column card grid using st.markdown (HTML).
-    Save buttons are rendered separately via st.columns because Streamlit
-    buttons cannot live inside st.markdown HTML blocks.
+    Render lineups as a 4-column card grid inside an iframe via
+    st.components.v1.html — this bypasses Streamlit's HTML sanitiser
+    which strips custom CSS/HTML inside st.markdown columns.
+    Save buttons are rendered below each row using native st.columns.
     """
-    score_col = f"Total {optimize_by}"
+    import streamlit.components.v1 as components
 
-    # We render cards in rows of 4
+    score_col = f"Total {optimize_by}"
     cards_per_row = 4
     rows = [lineups[i:i+cards_per_row] for i in range(0, len(lineups), cards_per_row)]
 
-    for row_lineups in rows:
-        cols = st.columns(cards_per_row)
+    # Shared CSS injected once into the iframe document
+    card_css = """
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap');
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { background: transparent; font-family: 'Inter', sans-serif; }
 
-        for col_idx, lineup in enumerate(row_lineups):
-            lineup_num = lineup.get("Lineup #", "?")
+      .cards-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        padding: 4px 2px;
+      }
+      .lineup-card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+        overflow: hidden;
+        font-size: 0.76rem;
+      }
+      .card-header {
+        background: #0f172a;
+        border-bottom: 1px solid #1f2937;
+        padding: 7px 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .card-num {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 0.85rem; letter-spacing: 0.05em; color: #00C2FF;
+      }
+      .card-score {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 1.2rem; color: #f0f0f0; letter-spacing: 0.02em;
+        margin-top: 1px;
+      }
+      .card-meta {
+        font-size: 0.67rem; color: #6b7280;
+        text-align: right; line-height: 1.55;
+      }
+      .card-meta span { color: #9ca3af; }
+      .saved-badge {
+        display: inline-block;
+        background: #052e16; color: #4ade80;
+        font-size: 0.6rem; padding: 1px 5px;
+        border-radius: 3px; border: 1px solid #16a34a;
+        vertical-align: middle; margin-left: 4px;
+      }
+      .player-row {
+        display: flex;
+        align-items: center;
+        padding: 4px 10px;
+        border-bottom: 1px solid #1a2235;
+        gap: 6px;
+      }
+      .player-row:last-child { border-bottom: none; }
+      .pos-badge {
+        font-size: 0.6rem; font-weight: 700;
+        padding: 1px 4px; border-radius: 3px;
+        min-width: 38px; text-align: center;
+        letter-spacing: 0.03em; flex-shrink: 0;
+      }
+      .pos-QB   { background: #3b1f6e; color: #c4b5fd; border: 1px solid #7c3aed55; }
+      .pos-RB   { background: #052e16; color: #6ee7b7; border: 1px solid #05522455; }
+      .pos-WRTE { background: #082f49; color: #7dd3fc; border: 1px solid #0c4a6e55; }
+      .pos-FLEX { background: #3d1f05; color: #fcd34d; border: 1px solid #78350f55; }
+      .pos-DST  { background: #3d0707; color: #fca5a5; border: 1px solid #7f1d1d55; }
+      .p-team {
+        font-size: 0.63rem; color: #6b7280; font-weight: 600;
+        min-width: 28px; flex-shrink: 0; letter-spacing: 0.04em;
+      }
+      .p-name {
+        flex: 1; color: #e5e7eb; font-weight: 500;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .p-sal  { color: #6b7280; min-width: 40px; text-align: right; flex-shrink: 0; }
+      .p-proj { color: #9ca3af; min-width: 30px; text-align: right; flex-shrink: 0; }
+      .p-own  { color: #4b5563; min-width: 34px; text-align: right;
+                flex-shrink: 0; font-size: 0.65rem; }
+    </style>
+    """
+
+    for row_idx, row_lineups in enumerate(rows):
+        # ── Build the iframe HTML for this row of cards ───────────────────────
+        cards_html = ""
+        for lineup in row_lineups:
+            lineup_num  = lineup.get("Lineup #", "?")
             already_saved = lineup_num in saved_set
-
             total_score = lineup.get(score_col, 0)
             total_sal   = lineup.get("Total Salary", 0)
             sal_rem     = lineup.get("Salary Remaining", SALARY_CAP - total_sal)
             total_own   = lineup.get("Total Ownership", 0)
 
-            # Build player rows HTML
-            player_rows_html = ""
+            saved_badge_html = '<span class="saved-badge">✓ Saved</span>' if already_saved else ""
+
+            player_rows = ""
             for slot in SLOT_COLS:
                 player_name = lineup.get(slot, "")
                 if not player_name:
                     continue
-
-                label, badge_class = SLOT_DISPLAY.get(slot, (slot, "pos-QB"))
+                label, badge_cls = SLOT_DISPLAY.get(slot, (slot, "pos-QB"))
                 pdata = player_lookup.get(player_name, {})
-                team  = pdata.get("Team", "")
+                team  = pdata.get("Team", "—")
                 sal   = format_salary(pdata.get("Salary", ""))
                 proj  = pdata.get(optimize_by, "")
-                proj  = f"{proj:.1f}" if isinstance(proj, float) else str(proj)
+                proj  = f"{proj:.1f}" if isinstance(proj, (int, float)) else str(proj)
                 own   = pdata.get("Ownership", "")
                 own   = f"{own:.1f}%" if isinstance(own, (int, float)) else str(own)
 
-                player_rows_html += f"""
+                player_rows += f"""
                 <div class="player-row">
-                    <span class="pos-badge {badge_class}">{label}</span>
-                    <span class="player-team">{team}</span>
-                    <span class="player-name">{player_name}</span>
-                    <span class="player-sal">{sal}</span>
-                    <span class="player-proj">{proj}</span>
-                    <span class="player-own">{own}</span>
+                  <span class="pos-badge {badge_cls}">{label}</span>
+                  <span class="p-team">{team}</span>
+                  <span class="p-name">{player_name}</span>
+                  <span class="p-sal">{sal}</span>
+                  <span class="p-proj">{proj}</span>
+                  <span class="p-own">{own}</span>
                 </div>"""
 
-            saved_badge = '<span class="card-saved-badge">✓ Saved</span>' if already_saved else ""
-
-            card_html = f"""
+            cards_html += f"""
             <div class="lineup-card">
-                <div class="card-header">
-                    <div>
-                        <div class="card-header-num">Lineup #{lineup_num} {saved_badge}</div>
-                        <div class="card-header-score">{total_score:.2f} pts</div>
-                    </div>
-                    <div class="card-header-meta">
-                        <div>Salary <span>{format_salary(total_sal)}</span></div>
-                        <div>Remaining <span>{format_salary(sal_rem)}</span></div>
-                        <div>Own <span>{total_own:.1f}%</span></div>
-                    </div>
+              <div class="card-header">
+                <div>
+                  <div class="card-num">Lineup #{lineup_num}{saved_badge_html}</div>
+                  <div class="card-score">{total_score:.2f} pts</div>
                 </div>
-                <div class="card-body">
-                    {player_rows_html}
+                <div class="card-meta">
+                  <div>Salary <span>{format_salary(total_sal)}</span></div>
+                  <div>Rem <span>{format_salary(sal_rem)}</span></div>
+                  <div>Own <span>{total_own:.1f}%</span></div>
                 </div>
+              </div>
+              <div>{player_rows}</div>
             </div>"""
 
-            with cols[col_idx]:
-                st.markdown(card_html, unsafe_allow_html=True)
+        # Pad to always have 4 cells so grid alignment stays consistent
+        for _ in range(cards_per_row - len(row_lineups)):
+            cards_html += "<div></div>"
 
-                if show_save_buttons:
+        full_html = f"""<!DOCTYPE html><html><head>{card_css}</head>
+        <body><div class="cards-grid">{cards_html}</div></body></html>"""
+
+        # Height: header ~55px + 7 player rows ~28px each + padding
+        iframe_height = 60 + (7 * 28) + 20
+        components.html(full_html, height=iframe_height, scrolling=False)
+
+        # ── Save buttons rendered natively below each row ─────────────────────
+        if show_save_buttons:
+            btn_cols = st.columns(cards_per_row)
+            for col_idx, lineup in enumerate(row_lineups):
+                lineup_num = lineup.get("Lineup #", "?")
+                already_saved = lineup_num in saved_set
+                with btn_cols[col_idx]:
                     if already_saved:
-                        st.markdown(
-                            "<div style='text-align:center; color:#4ade80; font-size:0.75rem; margin-top:4px;'>✅ Saved</div>",
-                            unsafe_allow_html=True,
-                        )
+                        st.success("✅ Saved", icon=None)
                     else:
-                        if st.button("💾 Save Lineup", key=f"{id_prefix}_save_{lineup_num}"):
+                        if st.button("💾 Save Lineup", key=f"{id_prefix}_save_{lineup_num}",
+                                     use_container_width=True):
                             st.session_state.saved_lineups.append(lineup)
                             st.rerun()
-
-        # Fill empty columns in last row
-        for empty_idx in range(len(row_lineups), cards_per_row):
-            with cols[empty_idx]:
-                st.empty()
+        else:
+            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
