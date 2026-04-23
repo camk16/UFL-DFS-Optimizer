@@ -25,6 +25,10 @@ if "gen_checked" not in st.session_state:
     st.session_state.gen_checked = {}   # lineup_num -> bool
 if "saved_checked" not in st.session_state:
     st.session_state.saved_checked = {} # lineup_num -> bool
+if "lineup_tags" not in st.session_state:
+    st.session_state.lineup_tags = {}   # lineup_num -> tag string
+if "saved_display_metric" not in st.session_state:
+    st.session_state.saved_display_metric = None  # chosen metric on saved tab
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -238,6 +242,12 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
       .p-sal  { color: #6b7280; min-width: 40px; text-align: right; flex-shrink: 0; }
       .p-proj { color: #9ca3af; min-width: 30px; text-align: right; flex-shrink: 0; }
       .p-own  { color: #4b5563; min-width: 34px; text-align: right; flex-shrink: 0; font-size: 0.65rem; }
+      .tag-badge {
+        display: inline-block; background: #1e3a5f; color: #60a5fa;
+        font-size: 0.58rem; padding: 1px 5px; border-radius: 3px;
+        border: 1px solid #2563eb55; vertical-align: middle; margin-left: 4px;
+        font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: 0.03em;
+      }
     </style>
     """
 
@@ -253,6 +263,10 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
             total_own     = lineup.get("Total Ownership", 0)
 
             saved_badge_html = '<span class="saved-badge">✓ Saved</span>' if already_saved else ""
+
+            # Tag badge (only shown on saved tab cards)
+            tag_val = st.session_state.lineup_tags.get(lineup_num, "")
+            tag_html = f'<span class="tag-badge">{tag_val}</span>' if tag_val else ""
 
             player_rows = ""
             for slot in SLOT_COLS:
@@ -282,7 +296,7 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
             <div class="lineup-card">
               <div class="card-header">
                 <div>
-                  <div class="card-num">Lineup #{lineup_num}{saved_badge_html}</div>
+                  <div class="card-num">Lineup #{lineup_num}{saved_badge_html}{tag_html}</div>
                   <div class="card-score">{total_score:.2f} pts</div>
                 </div>
                 <div class="card-meta">
@@ -554,11 +568,61 @@ with tab_optimizer:
         min_exposure_dict = {}
         if num_lineups > 1:
             st.markdown('<div class="section-header">📈 Exposure Limits (Optional)</div>', unsafe_allow_html=True)
+
+            # ── Position-level exposure ───────────────────────────────────────
+            st.markdown("**By Position** — max % any single player at that position can appear")
+            st.markdown("""
+            <div class="info-box" style="margin-bottom:0.5rem">
+            Leave a position blank to apply no limit. Enter a number 0–100 to cap
+            every player at that position to at most that % of lineups.
+            </div>
+            """, unsafe_allow_html=True)
+
+            pos_exp_cols = st.columns(5)
+            pos_labels = ["QB", "RB", "WR", "TE", "DST"]
+            pos_max_pct = {}
+            for i, pos in enumerate(pos_labels):
+                with pos_exp_cols[i]:
+                    val = st.number_input(
+                        pos, min_value=0, max_value=100, value=0, step=5,
+                        key=f"pos_exp_{pos}",
+                        help=f"Max % of lineups any single {pos} can appear in. 0 = no limit.",
+                    )
+                    if val > 0:
+                        pos_max_pct[pos] = val
+
+            # Convert position % caps into per-player max lineup counts
+            if pos_max_pct:
+                for _, row in df.iterrows():
+                    pos = row["Position"]
+                    # Match WR/TE/DST variations
+                    pos_key = None
+                    if pos == "QB" and "QB" in pos_max_pct:
+                        pos_key = "QB"
+                    elif pos == "RB" and "RB" in pos_max_pct:
+                        pos_key = "RB"
+                    elif pos == "WR" and "WR" in pos_max_pct:
+                        pos_key = "WR"
+                    elif pos == "TE" and "TE" in pos_max_pct:
+                        pos_key = "TE"
+                    elif pos in ["DST", "D", "DEF"] and "DST" in pos_max_pct:
+                        pos_key = "DST"
+                    if pos_key:
+                        cap = max(1, int((pos_max_pct[pos_key] / 100) * num_lineups))
+                        player = row["Player"]
+                        # Only apply if stricter than any existing player-level cap
+                        if player not in max_exposure_dict or cap < max_exposure_dict[player]:
+                            max_exposure_dict[player] = cap
+
+            st.markdown("---")
+
+            # ── Player-level exposure ─────────────────────────────────────────
+            st.markdown("**By Player** — fine-tune min/max for specific players")
             st.markdown("""
             <div class="info-box">
-            Set a <b>min</b> and <b>max</b> exposure % for specific players.<br>
             <b>Min</b> = player must appear in at least this % of lineups.<br>
-            <b>Max</b> = player can appear in at most this % of lineups.
+            <b>Max</b> = player can appear in at most this % of lineups.<br>
+            Player-level caps override position-level caps when stricter.
             </div>
             """, unsafe_allow_html=True)
             exp_players = st.multiselect(
@@ -573,7 +637,9 @@ with tab_optimizer:
                     key=f"exp_{p}",
                 )
                 if max_pct > 0:
-                    max_exposure_dict[p] = max(1, int((max_pct / 100) * num_lineups))
+                    player_cap = max(1, int((max_pct / 100) * num_lineups))
+                    # Player-level is always applied (overrides position cap)
+                    max_exposure_dict[p] = player_cap
                 if min_pct > 0:
                     min_exposure_dict[p] = max(1, int((min_pct / 100) * num_lineups))
 
@@ -712,48 +778,106 @@ with tab_saved:
             unsafe_allow_html=True,
         )
 
-        # Work out which optimize_by column to use for the cards
-        # (fall back gracefully if no CSV is uploaded on this session)
-        score_col_candidates = [c for c in saved_df.columns if c.startswith("Total ") and c != "Total Salary" and c != "Total Ownership"]
-        card_optimize_by = score_col_candidates[0].replace("Total ", "") if score_col_candidates else "DK Points"
-
         # Player lookup — use uploaded CSV if available, else empty
         card_player_lookup = player_lookup if uploaded_file is not None else {}
 
-        # ── Saved Lineup Cards ────────────────────────────────────────────────
+        # ── Controls bar: display metric + bulk actions ───────────────────────
         st.markdown('<div class="section-header">📋 Saved Lineups</div>', unsafe_allow_html=True)
 
-        saved_set_all = {r.get("Lineup #") for r in saved}
+        ctrl_a, ctrl_b, ctrl_c, ctrl_d, ctrl_e = st.columns([2, 1, 1, 1, 2])
 
-        # Select All / Deselect All / Delete Selected controls
-        dsel_col1, dsel_col2, dsel_col3, _ = st.columns([1, 1, 1, 4])
-        with dsel_col1:
+        with ctrl_a:
+            # Find all metric columns available across saved lineups
+            available_metrics = [
+                c.replace("Total ", "")
+                for c in saved_df.columns
+                if c.startswith("Total ") and c not in ("Total Salary", "Total Ownership")
+            ]
+            # Also allow switching to any metric present in the uploaded CSV
+            if uploaded_file is not None:
+                for m in ALL_OPTIMIZE_OPTIONS:
+                    if m in df.columns and m not in available_metrics:
+                        available_metrics.append(m)
+            if not available_metrics:
+                available_metrics = ["DK Points"]
+
+            # Default to previously chosen metric if still valid
+            default_idx = 0
+            if st.session_state.saved_display_metric in available_metrics:
+                default_idx = available_metrics.index(st.session_state.saved_display_metric)
+
+            card_optimize_by = st.selectbox(
+                "Display Metric",
+                options=available_metrics,
+                index=default_idx,
+                key="saved_metric_select",
+                help="Change which metric is shown on the lineup cards. Does not affect how lineups were optimized.",
+            )
+            st.session_state.saved_display_metric = card_optimize_by
+
+        with ctrl_b:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
             if st.button("☑️ Select All", key="saved_select_all"):
                 for r in saved:
                     st.session_state.saved_checked[r.get("Lineup #")] = True
                 st.rerun()
-        with dsel_col2:
+        with ctrl_c:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
             if st.button("⬜ Deselect All", key="saved_deselect_all"):
                 st.session_state.saved_checked = {}
                 st.rerun()
-        with dsel_col3:
+        with ctrl_d:
+            st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
             n_del_checked = sum(1 for v in st.session_state.saved_checked.values() if v)
-            if st.button(f"🗑️ Delete Selected ({n_del_checked})", key="saved_delete_selected",
+            if st.button(f"🗑️ Delete ({n_del_checked})", key="saved_delete_selected",
                          disabled=(n_del_checked == 0)):
                 keep = [
                     r for r in saved
                     if not st.session_state.saved_checked.get(r.get("Lineup #"), False)
                 ]
+                # Clean up tags for deleted lineups
+                deleted_nums = {
+                    r.get("Lineup #") for r in saved
+                    if st.session_state.saved_checked.get(r.get("Lineup #"), False)
+                }
+                for dn in deleted_nums:
+                    st.session_state.lineup_tags.pop(dn, None)
                 st.session_state.saved_lineups = keep
                 st.session_state.saved_checked = {}
                 st.rerun()
 
+        saved_set_all = {r.get("Lineup #") for r in saved}
         render_lineup_cards(
             saved, card_player_lookup, card_optimize_by,
             saved_set=saved_set_all,
             mode="saved",
             id_prefix="saved",
         )
+
+        # ── Tags ─────────────────────────────────────────────────────────────
+        st.markdown('<div class="section-header">🏷️ Lineup Tags</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="info-box">
+        Add a label to any saved lineup — e.g. <b>Cash</b>, <b>Single Entry</b>,
+        <b>Large Field GPP</b>. Tags are shown on the lineup card header and included
+        in CSV exports.
+        </div>
+        """, unsafe_allow_html=True)
+
+        tag_cols = st.columns(4)
+        for i, lineup in enumerate(saved):
+            lineup_num = lineup.get("Lineup #", "?")
+            qb = lineup.get("QB", "?")
+            col_idx = i % 4
+            with tag_cols[col_idx]:
+                current_tag = st.session_state.lineup_tags.get(lineup_num, "")
+                new_tag = st.text_input(
+                    f"#{lineup_num} ({qb})",
+                    value=current_tag,
+                    placeholder="e.g. Cash, GPP...",
+                    key=f"tag_{lineup_num}",
+                )
+                st.session_state.lineup_tags[lineup_num] = new_tag
 
         # ── Player Exposure ───────────────────────────────────────────────────
         st.markdown('<div class="section-header">📈 Player Exposure</div>', unsafe_allow_html=True)
@@ -791,10 +915,16 @@ with tab_saved:
         st.markdown('<div class="section-header">⬇️ Download Saved Lineups</div>', unsafe_allow_html=True)
         dl_a, dl_b = st.columns(2)
 
+        # Attach tags column to export
+        export_df = saved_df.copy()
+        export_df.insert(1, "Tag", export_df.get("Lineup #", pd.Series(dtype=str)).map(
+            lambda n: st.session_state.lineup_tags.get(n, "")
+        ))
+
         with dl_a:
             st.download_button(
                 "📥 Download Saved Lineups (CSV)",
-                data=saved_df.to_csv(index=False),
+                data=export_df.to_csv(index=False),
                 file_name="ufl_saved_lineups.csv", mime="text/csv",
             )
 
