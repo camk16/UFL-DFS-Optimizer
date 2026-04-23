@@ -561,6 +561,8 @@ with tab_optimizer:
                                      df_s["T.Val"].max()     if "T.Val"     in df_s else 1),
                 "Leverage":  (False, df_s["Leverage"].min()  if "Leverage"  in df_s else 0,
                                      df_s["Leverage"].max()  if "Leverage"  in df_s else 1),
+                "Pts/$":     (False, df_s["Pts/$"].min()     if "Pts/$"     in df_s else 0,
+                                     df_s["Pts/$"].max()     if "Pts/$"     in df_s else 1),
             }
             for col, (rev, cmin, cmax) in col_cfg.items():
                 if col in df_s.columns:
@@ -889,6 +891,23 @@ with tab_saved:
             st.markdown("<div style='padding-top:6px; font-size:0.8rem; color:#6b7280'>by display metric</div>",
                         unsafe_allow_html=True)
 
+        # ── Tag filter ───────────────────────────────────────────────────────
+        all_tags = sorted({
+            tag for num, tag in st.session_state.lineup_tags.items()
+            if tag.strip() and any(r.get("Lineup #") == num for r in saved)
+        })
+        tag_filter = None
+        if all_tags:
+            tag_filter_col, _ = st.columns([2, 5])
+            with tag_filter_col:
+                tag_options = ["All Tags"] + all_tags
+                tag_filter = st.selectbox(
+                    "🏷️ Filter by Tag", options=tag_options, index=0,
+                    key="saved_tag_filter",
+                )
+                if tag_filter == "All Tags":
+                    tag_filter = None
+
         # Sort lineups by calculated metric score
         reverse_sort = sort_dir.startswith("↓")
         sorted_saved = sorted(
@@ -896,6 +915,21 @@ with tab_saved:
             key=lambda lu: calc_total_score(lu, card_optimize_by, card_player_lookup),
             reverse=reverse_sort,
         )
+
+        # Apply tag filter
+        if tag_filter:
+            sorted_saved = [
+                lu for lu in sorted_saved
+                if st.session_state.lineup_tags.get(lu.get("Lineup #"), "").strip() == tag_filter
+            ]
+
+        n_showing = len(sorted_saved)
+        n_total   = len(saved)
+        if tag_filter:
+            st.markdown(
+                f'<div class="info-box" style="margin:0.4rem 0 0.6rem">Showing <b>{n_showing}</b> of {n_total} saved lineups tagged <b>"{tag_filter}"</b></div>',
+                unsafe_allow_html=True,
+            )
 
         saved_set_all = {r.get("Lineup #") for r in saved}
         render_lineup_cards(
