@@ -33,6 +33,10 @@ if "cb_gen_gen" not in st.session_state:
     st.session_state.cb_gen_gen = 0   # incremented to force checkbox re-init
 if "cb_saved_gen" not in st.session_state:
     st.session_state.cb_saved_gen = 0
+if "lineup_sets" not in st.session_state:
+    st.session_state.lineup_sets = {}        # name -> list of lineup dicts
+if "active_set_name" not in st.session_state:
+    st.session_state.active_set_name = None  # None = show live results
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -716,18 +720,72 @@ with tab_optimizer:
             st.session_state.last_results = results
 
         # ── Results ───────────────────────────────────────────────────────────
-        results = st.session_state.last_results
-        if results:
-            results_df = pd.DataFrame(results)
-            actual = len(results_df)
+        live_results = st.session_state.last_results
+        has_sets     = bool(st.session_state.lineup_sets)
+        has_live     = bool(live_results)
 
+        if has_live or has_sets:
             st.markdown('<div class="section-header">📋 Generated Lineups</div>', unsafe_allow_html=True)
-            st.markdown("""
-            <div class="info-box">
-            Each card shows <b>Position · Team · Player · Salary · Projection · Ownership</b>.
-            Click <b>💾 Save Lineup</b> under any card to add it to your Saved Lineups tab.
-            </div>
-            """, unsafe_allow_html=True)
+
+            # ── Set switcher bar ──────────────────────────────────────────────
+            set_names   = list(st.session_state.lineup_sets.keys())
+            view_options = (["▶ Live Results"] if has_live else []) + set_names
+            if not view_options:
+                st.info("No lineups generated yet.")
+                st.stop()
+
+            # Keep active selection valid
+            if st.session_state.active_set_name not in (view_options + [None]):
+                st.session_state.active_set_name = view_options[0]
+
+            default_view = st.session_state.active_set_name or view_options[0]
+            default_idx  = view_options.index(default_view) if default_view in view_options else 0
+
+            sw_col1, sw_col2, sw_col3 = st.columns([3, 1, 1])
+            with sw_col1:
+                active_view = st.selectbox(
+                    "Viewing",
+                    options=view_options,
+                    index=default_idx,
+                    key="gen_set_view",
+                    label_visibility="collapsed",
+                )
+                st.session_state.active_set_name = active_view
+
+            # Determine which lineups to display
+            if active_view == "▶ Live Results":
+                results = live_results
+            else:
+                results = st.session_state.lineup_sets.get(active_view, [])
+
+            with sw_col2:
+                # Save current live results as a named set
+                if active_view == "▶ Live Results":
+                    set_name_input = st.text_input(
+                        "Set name", placeholder="Name this set…",
+                        key="gen_set_name_input", label_visibility="collapsed",
+                    )
+                    if st.button("💼 Save Set", key="gen_save_set",
+                                 disabled=not set_name_input.strip()):
+                        name = set_name_input.strip()
+                        st.session_state.lineup_sets[name] = list(live_results)
+                        st.session_state.active_set_name = name
+                        st.rerun()
+
+            with sw_col3:
+                # Delete the currently viewed saved set
+                if active_view != "▶ Live Results":
+                    if st.button("🗑️ Delete Set", key="gen_delete_set"):
+                        del st.session_state.lineup_sets[active_view]
+                        st.session_state.active_set_name = view_options[0] if len(view_options) > 1 else None
+                        st.rerun()
+
+            results_df = pd.DataFrame(results)
+            actual     = len(results_df)
+
+            if not results:
+                st.warning("This set has no lineups.")
+                st.stop()
 
             saved_set = {r.get("Lineup #") for r in st.session_state.saved_lineups}
 
