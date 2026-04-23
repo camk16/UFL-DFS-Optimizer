@@ -524,7 +524,20 @@ with tab_optimizer:
             return styles
 
         styled = pool_display.style.apply(style_pool, axis=None)
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # Build column_config for formatting (applied on top of the styling)
+        col_config = {}
+        if "Salary" in pool_display.columns:
+            col_config["Salary"] = st.column_config.NumberColumn("Salary", format="$%d")
+        if "Ownership" in pool_display.columns:
+            col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%")
+        if "ID" in pool_display.columns:
+            col_config["ID"] = st.column_config.NumberColumn("ID", format="%d")
+        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
+            if c in pool_display.columns:
+                col_config[c] = st.column_config.NumberColumn(c, format="%.1f")
+
+        st.dataframe(styled, use_container_width=True, hide_index=True, column_config=col_config)
 
         # ── Lock / Exclude ────────────────────────────────────────────────────
         st.markdown('<div class="section-header">🔒 Lock & Exclude Players</div>', unsafe_allow_html=True)
@@ -538,24 +551,31 @@ with tab_optimizer:
 
         # ── Exposure Limits ───────────────────────────────────────────────────
         max_exposure_dict = {}
+        min_exposure_dict = {}
         if num_lineups > 1:
             st.markdown('<div class="section-header">📈 Exposure Limits (Optional)</div>', unsafe_allow_html=True)
             st.markdown("""
             <div class="info-box">
-            Exposure = what % of lineups a player appears in. Cap individual players here
-            to ensure variety across your lineup set.
+            Set a <b>min</b> and <b>max</b> exposure % for specific players.<br>
+            <b>Min</b> = player must appear in at least this % of lineups.<br>
+            <b>Max</b> = player can appear in at most this % of lineups.
             </div>
             """, unsafe_allow_html=True)
             exp_players = st.multiselect(
-                "Set max exposure for specific players",
+                "Set exposure limits for specific players",
                 options=sorted(df["Player"].tolist()), default=[],
             )
             for p in exp_players:
-                pct = st.slider(
-                    f"{p} — Max Exposure %", min_value=10, max_value=100,
-                    value=50, step=10, key=f"exp_{p}",
+                min_pct, max_pct = st.select_slider(
+                    f"{p} — Exposure Range %",
+                    options=list(range(0, 101, 5)),
+                    value=(0, 50),
+                    key=f"exp_{p}",
                 )
-                max_exposure_dict[p] = max(1, int((pct / 100) * num_lineups))
+                if max_pct > 0:
+                    max_exposure_dict[p] = max(1, int((max_pct / 100) * num_lineups))
+                if min_pct > 0:
+                    min_exposure_dict[p] = max(1, int((min_pct / 100) * num_lineups))
 
         # ── Generate ──────────────────────────────────────────────────────────
         st.markdown("---")
@@ -579,6 +599,7 @@ with tab_optimizer:
                         force_bring_back=force_bring_back,
                         locked_players=locked,
                         excluded_players=excluded,
+                        min_exposure=min_exposure_dict,
                         max_exposure=max_exposure_dict,
                     )
                 except ValueError as e:
