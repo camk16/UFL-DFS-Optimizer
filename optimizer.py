@@ -38,9 +38,13 @@ def clean_dataframe(df):
     df["Salary"] = df["Salary"].astype(str).str.replace(r'[\$,]', '', regex=True)
     df["Salary"] = pd.to_numeric(df["Salary"], errors="coerce").fillna(0).astype(int)
 
-    # Clean ownership - remove % if present
+    # Clean ownership - remove % if present, then auto-detect decimal vs percentage format
     df["Ownership"] = df["Ownership"].astype(str).str.replace('%', '', regex=False)
     df["Ownership"] = pd.to_numeric(df["Ownership"], errors="coerce").fillna(0).astype(float)
+    # If all non-zero values are <= 1.0, they are in decimal format (e.g. 0.2 = 20%) — convert
+    nonzero = df["Ownership"][df["Ownership"] > 0]
+    if len(nonzero) > 0 and nonzero.max() <= 1.0:
+        df["Ownership"] = df["Ownership"] * 100
 
     # Clean all numeric optimization columns if present
     for col in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
