@@ -37,6 +37,8 @@ if "lineup_sets" not in st.session_state:
     st.session_state.lineup_sets = {}        # name -> list of lineup dicts
 if "active_set_name" not in st.session_state:
     st.session_state.active_set_name = None  # None = show live results
+if "gen_display_metric" not in st.session_state:
+    st.session_state.gen_display_metric = None  # chosen display metric on gen tab
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -787,6 +789,26 @@ with tab_optimizer:
                 st.warning("This set has no lineups.")
                 st.stop()
 
+            # ── Display Metric (independent of Optimize By) ───────────────────
+            gen_metric_col, _ = st.columns([2, 5])
+            with gen_metric_col:
+                gen_avail_metrics = list(ALL_OPTIMIZE_OPTIONS)
+                if uploaded_file is not None:
+                    gen_avail_metrics = [m for m in ALL_OPTIMIZE_OPTIONS if m in df.columns]
+                if not gen_avail_metrics:
+                    gen_avail_metrics = ["DK Points"]
+                gen_default_idx = 0
+                if st.session_state.gen_display_metric in gen_avail_metrics:
+                    gen_default_idx = gen_avail_metrics.index(st.session_state.gen_display_metric)
+                gen_display_metric = st.selectbox(
+                    "Display Metric",
+                    options=gen_avail_metrics,
+                    index=gen_default_idx,
+                    key="gen_display_metric_select",
+                    help="Which metric to show on the cards. Independent of the Optimize By setting.",
+                )
+                st.session_state.gen_display_metric = gen_display_metric
+
             saved_set = {r.get("Lineup #") for r in st.session_state.saved_lineups}
 
             # ── Controls row ──────────────────────────────────────────────────
@@ -817,7 +839,7 @@ with tab_optimizer:
             gen_reverse = gen_sort_dir.startswith("↓")
             sorted_results = sorted(
                 results,
-                key=lambda lu: calc_total_score(lu, optimize_by, player_lookup),
+                key=lambda lu: calc_total_score(lu, gen_display_metric, player_lookup),
                 reverse=gen_reverse,
             )
 
@@ -856,7 +878,7 @@ with tab_optimizer:
                 )
 
             render_lineup_cards(
-                sorted_results, player_lookup, optimize_by,
+                sorted_results, player_lookup, gen_display_metric,
                 saved_set=saved_set,
                 mode="gen",
                 id_prefix="gen",
@@ -894,14 +916,14 @@ with tab_optimizer:
             s1.metric("Lineups Generated", actual)
 
             # Score: prefer stored Total column, fall back to live calculation
-            score_col = f"Total {optimize_by}"
+            score_col = f"Total {gen_display_metric}"
             if score_col in results_df.columns:
                 avg_score = round(results_df[score_col].mean(), 2)
             else:
                 avg_score = round(
-                    sum(calc_total_score(r, optimize_by, player_lookup) for r in results) / max(actual, 1), 2
+                    sum(calc_total_score(r, gen_display_metric, player_lookup) for r in results) / max(actual, 1), 2
                 )
-            s2.metric(f"Avg {optimize_by}", avg_score)
+            s2.metric(f"Avg {gen_display_metric}", avg_score)
 
             # Ownership: live-calculate to handle decimal format correctly
             def lineup_total_own(lu):
