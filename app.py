@@ -173,6 +173,18 @@ def format_salary(val):
         return str(val)
 
 
+def calc_total_score(lineup, metric, plookup):
+    """Sum metric values from player_lookup for all 7 slots — works for any metric."""
+    total = 0.0
+    for slot in SLOT_COLS:
+        name = lineup.get(slot, "")
+        if name and name in plookup:
+            val = plookup[name].get(metric, 0)
+            if isinstance(val, (int, float)):
+                total += val
+    return total
+
+
 def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                         mode="gen", id_prefix="gen"):
     """
@@ -188,16 +200,6 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
 
     checked_state = st.session_state.gen_checked if mode == "gen" else st.session_state.saved_checked
 
-    def calc_total_score(lineup, metric, plookup):
-        """Sum metric values from player_lookup for all 7 slots — works for any metric."""
-        total = 0.0
-        for slot in SLOT_COLS:
-            name = lineup.get(slot, "")
-            if name and name in plookup:
-                val = plookup[name].get(metric, 0)
-                if isinstance(val, (int, float)):
-                    total += val
-        return total
 
     card_css = """
     <style>
@@ -324,7 +326,7 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
               <div class="card-header">
                 <div>
                   <div class="card-num">Lineup #{lineup_num}{saved_badge_html}{tag_html}</div>
-                  <div class="card-score">{total_score:.2f} pts</div>
+                  <div class="card-score">{total_score:.2f} {optimize_by}</div>
                 </div>
                 <div class="card-meta">
                   <div>Salary <span>{format_salary(total_sal)}</span></div>
@@ -379,7 +381,7 @@ with st.sidebar:
     <div class="info-box">
     Upload your weekly CSV file. Required columns:<br>
     <b>Player, Position, Team, Salary, Ownership</b><br><br>
-    Optional: <b>DK Points, Value, T.Val, Leverage, Pts/S, ID</b>
+    Optional: <b>DK Points, Value, T.Val, Leverage, Pts/$, ID</b>
     </div>
     """, unsafe_allow_html=True)
 
@@ -390,7 +392,7 @@ with st.sidebar:
 
     st.markdown('<div class="section-header">⚙️ Settings</div>', unsafe_allow_html=True)
 
-    ALL_OPTIMIZE_OPTIONS = ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]
+    ALL_OPTIMIZE_OPTIONS = ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]
     optimize_by = st.selectbox(
         "Optimize By", options=ALL_OPTIMIZE_OPTIONS, index=0,
         help="Which metric to maximise. DK Points = raw projected fantasy points."
@@ -470,7 +472,7 @@ with tab_optimizer:
             "Ownership":[28.5, 18.2, 14.1, 22.3, 15.6, 8.4, 12.0],
             "ID":       [11191729, 11192543, 11192100, 11193021, 11192876, 11193154, 11190044],
             "Leverage": [1.2, 0.9, 0.6, 1.1, 0.7, 0.5, 0.4],
-            "Pts/S":    [3.38, 2.91, 2.10, 2.71, 2.14, 1.95, 2.84],
+            "Pts/$":    [3.38, 2.91, 2.10, 2.71, 2.14, 1.95, 2.84],
             "T.Val":    [3.4, 2.8, 1.9, 2.6, 1.8, 1.2, 1.0],
         })
         st.dataframe(sample_data, use_container_width=True, hide_index=True)
@@ -508,7 +510,7 @@ with tab_optimizer:
 
         show_cols = ["Player", "Position", "Team", "Opponent", "Salary", "Ownership"]
         show_cols = [c for c in show_cols if c in df.columns]
-        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
+        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
             if c in df.columns:
                 show_cols.append(c)
         if "ID" in df.columns:
@@ -577,7 +579,7 @@ with tab_optimizer:
             col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%")
         if "ID" in pool_display.columns:
             col_config["ID"] = st.column_config.NumberColumn("ID", format="%d")
-        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
+        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
             if c in pool_display.columns:
                 col_config[c] = st.column_config.NumberColumn(c, format="%.1f")
 
