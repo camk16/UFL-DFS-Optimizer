@@ -764,9 +764,16 @@ with tab_optimizer:
             )
 
             # ── Tag filter ────────────────────────────────────────────────────
+            def get_gen_tag(num):
+                widget_key = f"gen_tag_{num}"
+                if widget_key in st.session_state:
+                    return str(st.session_state[widget_key]).strip()
+                return str(st.session_state.lineup_tags.get(num, "")).strip()
+
             gen_all_tags = sorted({
-                tag for num, tag in st.session_state.lineup_tags.items()
-                if tag.strip() and any(r.get("Lineup #") == num for r in results)
+                get_gen_tag(r.get("Lineup #"))
+                for r in results
+                if get_gen_tag(r.get("Lineup #"))
             })
             gen_tag_filter = None
             if gen_all_tags:
@@ -783,7 +790,7 @@ with tab_optimizer:
             if gen_tag_filter:
                 sorted_results = [
                     lu for lu in sorted_results
-                    if st.session_state.lineup_tags.get(lu.get("Lineup #"), "").strip() == gen_tag_filter
+                    if get_gen_tag(lu.get("Lineup #")) == gen_tag_filter
                 ]
                 st.markdown(
                     f'<div class="info-box" style="margin:0.4rem 0 0.6rem">Showing <b>{len(sorted_results)}</b> of {actual} lineups tagged <b>"{gen_tag_filter}"</b></div>',
@@ -959,9 +966,19 @@ with tab_saved:
                         unsafe_allow_html=True)
 
         # ── Tag filter ───────────────────────────────────────────────────────
+        # Read tags from both session_state.lineup_tags AND from the widget
+        # keys directly (f"saved_tag_{num}") so tags entered this render
+        # are immediately available without waiting for a rerun.
+        def get_tag(num):
+            widget_key = f"saved_tag_{num}"
+            if widget_key in st.session_state:
+                return str(st.session_state[widget_key]).strip()
+            return str(st.session_state.lineup_tags.get(num, "")).strip()
+
         all_tags = sorted({
-            tag for num, tag in st.session_state.lineup_tags.items()
-            if tag.strip() and any(r.get("Lineup #") == num for r in saved)
+            get_tag(r.get("Lineup #"))
+            for r in saved
+            if get_tag(r.get("Lineup #"))
         })
         tag_filter = None
         if all_tags:
@@ -987,7 +1004,7 @@ with tab_saved:
         if tag_filter:
             sorted_saved = [
                 lu for lu in sorted_saved
-                if st.session_state.lineup_tags.get(lu.get("Lineup #"), "").strip() == tag_filter
+                if get_tag(lu.get("Lineup #")) == tag_filter
             ]
 
         n_showing = len(sorted_saved)
