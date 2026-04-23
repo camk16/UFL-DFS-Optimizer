@@ -29,6 +29,10 @@ if "lineup_tags" not in st.session_state:
     st.session_state.lineup_tags = {}   # lineup_num -> tag string
 if "saved_display_metric" not in st.session_state:
     st.session_state.saved_display_metric = None  # chosen metric on saved tab
+if "cb_gen_gen" not in st.session_state:
+    st.session_state.cb_gen_gen = 0   # incremented to force checkbox re-init
+if "cb_saved_gen" not in st.session_state:
+    st.session_state.cb_saved_gen = 0
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -352,22 +356,22 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
             lineup_num = lineup.get("Lineup #", "?")
             with cb_cols[col_idx]:
                 # Checkbox
-                key = f"{id_prefix}_cb_{lineup_num}"
+                gen_counter = st.session_state.get(f"cb_{id_prefix}_gen", 0)
+                key = f"{id_prefix}_cb_{lineup_num}_g{gen_counter}"
                 current = checked_state.get(lineup_num, False)
                 checked = st.checkbox("Select", value=current, key=key)
                 checked_state[lineup_num] = checked
 
-                # Tag input (only on saved tab)
-                if mode == "saved":
-                    current_tag = st.session_state.lineup_tags.get(lineup_num, "")
-                    new_tag = st.text_input(
-                        "🏷️ Tag",
-                        value=current_tag,
-                        placeholder="e.g. Cash, GPP...",
-                        key=f"tag_{lineup_num}",
-                        label_visibility="collapsed",
-                    )
-                    st.session_state.lineup_tags[lineup_num] = new_tag
+                # Tag input — shown on both gen and saved tabs
+                current_tag = st.session_state.lineup_tags.get(lineup_num, "")
+                new_tag = st.text_input(
+                    "🏷️ Tag",
+                    value=current_tag,
+                    placeholder="e.g. Cash, GPP...",
+                    key=f"tag_{lineup_num}",
+                    label_visibility="collapsed",
+                )
+                st.session_state.lineup_tags[lineup_num] = new_tag
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -726,16 +730,18 @@ with tab_optimizer:
 
             saved_set = {r.get("Lineup #") for r in st.session_state.saved_lineups}
 
-            # Select All / Deselect All controls
-            sel_col1, sel_col2, sel_col3, _ = st.columns([1, 1, 1, 4])
+            # ── Controls row ──────────────────────────────────────────────────
+            sel_col1, sel_col2, sel_col3, sel_col4, _ = st.columns([1, 1, 1, 1, 3])
             with sel_col1:
                 if st.button("☑️ Select All", key="gen_select_all"):
                     for r in results:
                         st.session_state.gen_checked[r.get("Lineup #")] = True
+                    st.session_state.cb_gen_gen += 1
                     st.rerun()
             with sel_col2:
                 if st.button("⬜ Deselect All", key="gen_deselect_all"):
                     st.session_state.gen_checked = {}
+                    st.session_state.cb_gen_gen += 1
                     st.rerun()
             with sel_col3:
                 n_checked = sum(1 for v in st.session_state.gen_checked.values() if v)
@@ -751,8 +757,53 @@ with tab_optimizer:
                     st.session_state.gen_checked = {}
                     st.rerun()
 
+            # ── Sort ──────────────────────────────────────────────────────────
+            gsort_col1, gsort_col2, _ = st.columns([1, 1, 5])
+            with gsort_col1:
+                gen_sort_dir = st.selectbox(
+                    "Sort", options=["↓ Highest First", "↑ Lowest First"],
+                    index=0, key="gen_sort_dir", label_visibility="collapsed",
+                )
+            with gsort_col2:
+                st.markdown("<div style='padding-top:6px; font-size:0.8rem; color:#6b7280'>by display metric</div>",
+                            unsafe_allow_html=True)
+
+            gen_reverse = gen_sort_dir.startswith("↓")
+            sorted_results = sorted(
+                results,
+                key=lambda lu: calc_total_score(lu, optimize_by, player_lookup),
+                reverse=gen_reverse,
+            )
+
+            # ── Tag filter ────────────────────────────────────────────────────
+            gen_all_tags = sorted({
+                tag for num, tag in st.session_state.lineup_tags.items()
+                if tag.strip() and any(r.get("Lineup #") == num for r in results)
+            })
+            gen_tag_filter = None
+            if gen_all_tags:
+                gfilt_col, _ = st.columns([2, 5])
+                with gfilt_col:
+                    gen_tag_opts = ["All Tags"] + gen_all_tags
+                    gen_tag_sel = st.selectbox(
+                        "🏷️ Filter by Tag", options=gen_tag_opts, index=0,
+                        key="gen_tag_filter",
+                    )
+                    if gen_tag_sel != "All Tags":
+                        gen_tag_filter = gen_tag_sel
+
+            if gen_tag_filter:
+                sorted_results = [
+                    lu for lu in sorted_results
+                    if st.session_state.lineup_tags.get(lu.get("Lineup #"), "").strip() == gen_tag_filter
+                ]
+                st.markdown(
+                    f'<div class="info-box" style="margin:0.4rem 0 0.6rem">Showing <b>{len(sorted_results)}</b> of {actual} lineups tagged <b>"{gen_tag_filter}"</b></div>',
+                    unsafe_allow_html=True,
+                )
+
             render_lineup_cards(
-                results, player_lookup, optimize_by,
+                sorted_results, player_lookup, optimize_by,
                 saved_set=saved_set,
                 mode="gen",
                 id_prefix="gen",
@@ -854,11 +905,13 @@ with tab_saved:
             if st.button("☑️ Select All", key="saved_select_all"):
                 for r in saved:
                     st.session_state.saved_checked[r.get("Lineup #")] = True
+                st.session_state.cb_saved_gen += 1
                 st.rerun()
         with ctrl_c:
             st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
             if st.button("⬜ Deselect All", key="saved_deselect_all"):
                 st.session_state.saved_checked = {}
+                st.session_state.cb_saved_gen += 1
                 st.rerun()
         with ctrl_d:
             st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
