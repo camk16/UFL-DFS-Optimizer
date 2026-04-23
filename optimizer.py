@@ -47,7 +47,7 @@ def clean_dataframe(df):
         df["Ownership"] = df["Ownership"] * 100
 
     # Clean all numeric optimization columns if present
-    for col in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
+    for col in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(float)
 
