@@ -183,11 +183,21 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
     """
     import streamlit.components.v1 as components
 
-    score_col = f"Total {optimize_by}"
     cards_per_row = 4
     rows = [lineups[i:i+cards_per_row] for i in range(0, len(lineups), cards_per_row)]
 
     checked_state = st.session_state.gen_checked if mode == "gen" else st.session_state.saved_checked
+
+    def calc_total_score(lineup, metric, plookup):
+        """Sum metric values from player_lookup for all 7 slots — works for any metric."""
+        total = 0.0
+        for slot in SLOT_COLS:
+            name = lineup.get(slot, "")
+            if name and name in plookup:
+                val = plookup[name].get(metric, 0)
+                if isinstance(val, (int, float)):
+                    total += val
+        return total
 
     card_css = """
     <style>
@@ -242,6 +252,7 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
       .p-sal  { color: #6b7280; min-width: 40px; text-align: right; flex-shrink: 0; }
       .p-proj { color: #9ca3af; min-width: 30px; text-align: right; flex-shrink: 0; }
       .p-own  { color: #4b5563; min-width: 34px; text-align: right; flex-shrink: 0; font-size: 0.65rem; }
+      .p-opp  { font-size: 0.6rem; color: #374151; min-width: 26px; flex-shrink: 0; font-style: italic; }
       .tag-badge {
         display: inline-block; background: #1e3a5f; color: #60a5fa;
         font-size: 0.58rem; padding: 1px 5px; border-radius: 3px;
@@ -257,15 +268,23 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
         for lineup in row_lineups:
             lineup_num    = lineup.get("Lineup #", "?")
             already_saved = lineup_num in saved_set
-            total_score   = lineup.get(score_col, 0)
-            total_sal     = lineup.get("Total Salary", 0)
-            sal_rem       = lineup.get("Salary Remaining", SALARY_CAP - total_sal)
-            total_own     = lineup.get("Total Ownership", 0)
+
+            # Always calculate score live from player data so metric switcher works
+            total_score = calc_total_score(lineup, optimize_by, player_lookup)
+            total_sal   = lineup.get("Total Salary", 0)
+            sal_rem     = lineup.get("Salary Remaining", SALARY_CAP - total_sal)
+
+            # Calculate total ownership live and fix decimal format
+            raw_owns = [player_lookup.get(lineup.get(s,""),{}).get("Ownership",0) for s in SLOT_COLS if lineup.get(s,"")]
+            raw_owns = [v for v in raw_owns if isinstance(v,(int,float))]
+            # Detect if ownership is in decimal format (all values <=1)
+            if raw_owns and max(raw_owns) <= 1.0:
+                total_own = sum(raw_owns) * 100
+            else:
+                total_own = sum(raw_owns)
 
             saved_badge_html = '<span class="saved-badge">✓ Saved</span>' if already_saved else ""
-
-            # Tag badge (only shown on saved tab cards)
-            tag_val = st.session_state.lineup_tags.get(lineup_num, "")
+            tag_val  = st.session_state.lineup_tags.get(lineup_num, "")
             tag_html = f'<span class="tag-badge">{tag_val}</span>' if tag_val else ""
 
             player_rows = ""
@@ -276,16 +295,24 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                 label, badge_cls = SLOT_DISPLAY.get(slot, (slot, "pos-QB"))
                 pdata = player_lookup.get(player_name, {})
                 team  = pdata.get("Team", "—")
+                opp   = pdata.get("Opponent", "")
                 sal   = format_salary(pdata.get("Salary", ""))
                 proj  = pdata.get(optimize_by, "")
                 proj  = f"{proj:.1f}" if isinstance(proj, (int, float)) else str(proj)
-                own   = pdata.get("Ownership", "")
-                own   = f"{own:.1f}%" if isinstance(own, (int, float)) else str(own)
+                own_raw = pdata.get("Ownership", "")
+                if isinstance(own_raw, (int, float)):
+                    own_val = own_raw * 100 if 0 <= own_raw <= 1.0 else own_raw
+                    own = f"{own_val:.1f}%"
+                else:
+                    own = str(own_raw)
+
+                opp_span = f'<span class="p-opp">vs {opp}</span>' if opp else ""
 
                 player_rows += f"""
                 <div class="player-row">
                   <span class="pos-badge {badge_cls}">{label}</span>
                   <span class="p-team">{team}</span>
+                  {opp_span}
                   <span class="p-name">{player_name}</span>
                   <span class="p-sal">{sal}</span>
                   <span class="p-proj">{proj}</span>
@@ -317,19 +344,28 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
         iframe_height = 60 + (7 * 28) + 20
         components.html(full_html, height=iframe_height, scrolling=False)
 
-        # ── Checkboxes below each card in this row ────────────────────────────
+        # ── Checkboxes + tag inputs below each card in this row ────────────
         cb_cols = st.columns(cards_per_row)
         for col_idx, lineup in enumerate(row_lineups):
             lineup_num = lineup.get("Lineup #", "?")
-            key = f"{id_prefix}_cb_{lineup_num}"
-            current = checked_state.get(lineup_num, False)
             with cb_cols[col_idx]:
-                checked = st.checkbox(
-                    "Select",
-                    value=current,
-                    key=key,
-                )
+                # Checkbox
+                key = f"{id_prefix}_cb_{lineup_num}"
+                current = checked_state.get(lineup_num, False)
+                checked = st.checkbox("Select", value=current, key=key)
                 checked_state[lineup_num] = checked
+
+                # Tag input (only on saved tab)
+                if mode == "saved":
+                    current_tag = st.session_state.lineup_tags.get(lineup_num, "")
+                    new_tag = st.text_input(
+                        "🏷️ Tag",
+                        value=current_tag,
+                        placeholder="e.g. Cash, GPP...",
+                        key=f"tag_{lineup_num}",
+                        label_visibility="collapsed",
+                    )
+                    st.session_state.lineup_tags[lineup_num] = new_tag
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -464,12 +500,6 @@ with tab_optimizer:
 
         # ── Player Pool ───────────────────────────────────────────────────────
         st.markdown('<div class="section-header">📊 Player Pool</div>', unsafe_allow_html=True)
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Players", len(df))
-        m2.metric("QBs",  len(df[df["Position"] == "QB"]))
-        m3.metric("RBs",  len(df[df["Position"] == "RB"]))
-        m4.metric("WRs / TEs", len(df[df["Position"].isin(["WR", "TE"])]))
 
         pos_filter = st.multiselect(
             "Filter by Position", options=sorted(df["Position"].unique()), default=[],
@@ -846,38 +876,34 @@ with tab_saved:
                 st.session_state.saved_checked = {}
                 st.rerun()
 
+        # ── Sort controls ─────────────────────────────────────────────────────
+        sort_col1, sort_col2, _ = st.columns([1, 1, 5])
+        with sort_col1:
+            sort_dir = st.selectbox(
+                "Sort", options=["↓ Highest First", "↑ Lowest First"],
+                index=0, key="saved_sort_dir", label_visibility="collapsed",
+            )
+        with sort_col2:
+            st.markdown("<div style='padding-top:6px; font-size:0.8rem; color:#6b7280'>by display metric</div>",
+                        unsafe_allow_html=True)
+
+        # Sort lineups by calculated metric score
+        reverse_sort = sort_dir.startswith("↓")
+        sorted_saved = sorted(
+            saved,
+            key=lambda lu: calc_total_score(lu, card_optimize_by, card_player_lookup),
+            reverse=reverse_sort,
+        )
+
         saved_set_all = {r.get("Lineup #") for r in saved}
         render_lineup_cards(
-            saved, card_player_lookup, card_optimize_by,
+            sorted_saved, card_player_lookup, card_optimize_by,
             saved_set=saved_set_all,
             mode="saved",
             id_prefix="saved",
         )
 
-        # ── Tags ─────────────────────────────────────────────────────────────
-        st.markdown('<div class="section-header">🏷️ Lineup Tags</div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="info-box">
-        Add a label to any saved lineup — e.g. <b>Cash</b>, <b>Single Entry</b>,
-        <b>Large Field GPP</b>. Tags are shown on the lineup card header and included
-        in CSV exports.
-        </div>
-        """, unsafe_allow_html=True)
 
-        tag_cols = st.columns(4)
-        for i, lineup in enumerate(saved):
-            lineup_num = lineup.get("Lineup #", "?")
-            qb = lineup.get("QB", "?")
-            col_idx = i % 4
-            with tag_cols[col_idx]:
-                current_tag = st.session_state.lineup_tags.get(lineup_num, "")
-                new_tag = st.text_input(
-                    f"#{lineup_num} ({qb})",
-                    value=current_tag,
-                    placeholder="e.g. Cash, GPP...",
-                    key=f"tag_{lineup_num}",
-                )
-                st.session_state.lineup_tags[lineup_num] = new_tag
 
         # ── Player Exposure ───────────────────────────────────────────────────
         st.markdown('<div class="section-header">📈 Player Exposure</div>', unsafe_allow_html=True)
