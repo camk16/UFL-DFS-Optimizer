@@ -269,12 +269,24 @@ def optimize_lineups(
             prob += pulp.lpSum(x[i] for i in prev_lineup) <= TOTAL_PLAYERS - 1
 
         # --- Exposure Constraints ---
-        # Max exposure: if player has already hit their max, exclude them
+        lineups_remaining = num_lineups - lineup_num
+
+        # Max exposure: exclude player once they have hit their cap
         for name, max_count in max_exposure.items():
             if player_lineup_count.get(name, 0) >= max_count:
                 idx = pool[pool["Player"] == name].index
                 if len(idx) > 0:
                     prob += x[idx[0]] == 0
+
+        # Min exposure: if player still needs appearances and there are
+        # just enough lineups left to satisfy the minimum, force them in
+        for name, min_count in min_exposure.items():
+            current = player_lineup_count.get(name, 0)
+            still_needed = min_count - current
+            if still_needed > 0 and still_needed >= lineups_remaining:
+                idx = pool[pool["Player"] == name].index
+                if len(idx) > 0:
+                    prob += x[idx[0]] == 1
 
         # --- Solve ---
         solver = pulp.PULP_CBC_CMD(msg=0)
