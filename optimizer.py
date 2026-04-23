@@ -79,6 +79,7 @@ def optimize_lineups(
     max_cumulative_ownership=None,
     force_qb_stack=False,
     qb_stack_count=1,
+    force_bring_back=False,
     locked_players=None,
     excluded_players=None,
     min_exposure=None,
@@ -236,6 +237,31 @@ def optimize_lineups(
                 # If QB from this team selected, must have at least qb_stack_count WR/TE from same team
                 if len(t_wrte) > 0:
                     prob += pulp.lpSum(x[i] for i in t_wrte) >= qb_stack_count * team_qb[team]
+
+        # --- Bring-Back Constraint ---
+        # Requires at least 1 player from the opposing team of the QB's team.
+        # "Opponent" column must exist in the pool (it holds the opposing team abbrev).
+        if force_bring_back and "Opponent" in pool.columns:
+            teams = pool["Team"].unique()
+            team_qb_bb = {t: pulp.LpVariable(f"bb_qb_{t}_{lineup_num}", cat="Binary") for t in teams}
+            for team in teams:
+                t_qb_idx = pool[(pool["Team"] == team) & (pool["Position"] == "QB")].index
+                if len(t_qb_idx) == 0:
+                    prob += team_qb_bb[team] == 0
+                    continue
+                prob += team_qb_bb[team] == pulp.lpSum(x[i] for i in t_qb_idx)
+                # Find the opponent of this team (look it up from the pool rows)
+                opp_rows = pool[pool["Team"] == team]
+                if opp_rows.empty:
+                    continue
+                opp_team = opp_rows["Opponent"].iloc[0]
+                opp_skill_idx = pool[
+                    (pool["Team"] == opp_team) &
+                    (pool["Position"].isin(["RB", "WR", "TE"]))
+                ].index
+                if len(opp_skill_idx) > 0:
+                    # If QB from this team is chosen, at least 1 skill player from opponent
+                    prob += pulp.lpSum(x[i] for i in opp_skill_idx) >= team_qb_bb[team]
 
         # --- Uniqueness Constraint (from previous lineups) ---
         for prev_lineup in previous_lineups:
