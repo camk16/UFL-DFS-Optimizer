@@ -890,12 +890,31 @@ with tab_optimizer:
 
             # ── Summary ───────────────────────────────────────────────────────
             st.markdown('<div class="section-header">📊 Summary</div>', unsafe_allow_html=True)
-            score_col = f"Total {optimize_by}"
             s1, s2, s3, s4 = st.columns(4)
             s1.metric("Lineups Generated", actual)
-            s2.metric(f"Avg {optimize_by}", round(results_df[score_col].mean(), 2))
-            s3.metric("Avg Ownership %", round(results_df["Total Ownership"].mean(), 1))
-            s4.metric("Avg Salary Used", f"${int(results_df['Total Salary'].mean()):,}")
+
+            # Score: prefer stored Total column, fall back to live calculation
+            score_col = f"Total {optimize_by}"
+            if score_col in results_df.columns:
+                avg_score = round(results_df[score_col].mean(), 2)
+            else:
+                avg_score = round(
+                    sum(calc_total_score(r, optimize_by, player_lookup) for r in results) / max(actual, 1), 2
+                )
+            s2.metric(f"Avg {optimize_by}", avg_score)
+
+            # Ownership: live-calculate to handle decimal format correctly
+            def lineup_total_own(lu):
+                raws = [player_lookup.get(lu.get(s, ""), {}).get("Ownership", 0) for s in SLOT_COLS if lu.get(s, "")]
+                raws = [v for v in raws if isinstance(v, (int, float))]
+                if raws and max(raws) <= 1.0:
+                    return sum(raws) * 100
+                return sum(raws)
+            avg_own = round(sum(lineup_total_own(r) for r in results) / max(actual, 1), 1)
+            s3.metric("Avg Ownership %", avg_own)
+
+            avg_sal = int(results_df["Total Salary"].mean()) if "Total Salary" in results_df.columns else 0
+            s4.metric("Avg Salary Used", f"${avg_sal:,}")
 
             # ── Downloads ─────────────────────────────────────────────────────
             st.markdown('<div class="section-header">⬇️ Download</div>', unsafe_allow_html=True)
