@@ -21,6 +21,10 @@ if "saved_lineups" not in st.session_state:
     st.session_state.saved_lineups = []
 if "last_results" not in st.session_state:
     st.session_state.last_results = []
+if "gen_checked" not in st.session_state:
+    st.session_state.gen_checked = {}   # lineup_num -> bool
+if "saved_checked" not in st.session_state:
+    st.session_state.saved_checked = {} # lineup_num -> bool
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -166,12 +170,12 @@ def format_salary(val):
 
 
 def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
-                        show_save_buttons=True, id_prefix="gen"):
+                        mode="gen", id_prefix="gen"):
     """
-    Render lineups as a 4-column card grid inside an iframe via
-    st.components.v1.html — this bypasses Streamlit's HTML sanitiser
-    which strips custom CSS/HTML inside st.markdown columns.
-    Save buttons are rendered below each row using native st.columns.
+    Render lineups as a 4-column card grid inside iframes.
+    mode="gen"   -> show checkboxes, cards marked if already saved
+    mode="saved" -> show checkboxes for deletion
+    Checkboxes stored in st.session_state.gen_checked / saved_checked.
     """
     import streamlit.components.v1 as components
 
@@ -179,33 +183,26 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
     cards_per_row = 4
     rows = [lineups[i:i+cards_per_row] for i in range(0, len(lineups), cards_per_row)]
 
-    # Shared CSS injected once into the iframe document
+    checked_state = st.session_state.gen_checked if mode == "gen" else st.session_state.saved_checked
+
     card_css = """
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap');
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: transparent; font-family: 'Inter', sans-serif; }
-
       .cards-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
-        gap: 10px;
-        padding: 4px 2px;
+        gap: 10px; padding: 4px 2px;
       }
       .lineup-card {
-        background: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 8px;
-        overflow: hidden;
-        font-size: 0.76rem;
+        background: #111827; border: 1px solid #1f2937;
+        border-radius: 8px; overflow: hidden; font-size: 0.76rem;
       }
       .card-header {
-        background: #0f172a;
-        border-bottom: 1px solid #1f2937;
-        padding: 7px 10px;
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
+        background: #0f172a; border-bottom: 1px solid #1f2937;
+        padding: 7px 10px; display: flex;
+        justify-content: space-between; align-items: flex-start;
       }
       .card-num {
         font-family: 'Bebas Neue', sans-serif;
@@ -213,65 +210,47 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
       }
       .card-score {
         font-family: 'Bebas Neue', sans-serif;
-        font-size: 1.2rem; color: #f0f0f0; letter-spacing: 0.02em;
-        margin-top: 1px;
+        font-size: 1.2rem; color: #f0f0f0; letter-spacing: 0.02em; margin-top: 1px;
       }
-      .card-meta {
-        font-size: 0.67rem; color: #6b7280;
-        text-align: right; line-height: 1.55;
-      }
+      .card-meta { font-size: 0.67rem; color: #6b7280; text-align: right; line-height: 1.55; }
       .card-meta span { color: #9ca3af; }
       .saved-badge {
-        display: inline-block;
-        background: #052e16; color: #4ade80;
-        font-size: 0.6rem; padding: 1px 5px;
-        border-radius: 3px; border: 1px solid #16a34a;
-        vertical-align: middle; margin-left: 4px;
+        display: inline-block; background: #052e16; color: #4ade80;
+        font-size: 0.6rem; padding: 1px 5px; border-radius: 3px;
+        border: 1px solid #16a34a; vertical-align: middle; margin-left: 4px;
       }
       .player-row {
-        display: flex;
-        align-items: center;
-        padding: 4px 10px;
-        border-bottom: 1px solid #1a2235;
-        gap: 6px;
+        display: flex; align-items: center;
+        padding: 4px 10px; border-bottom: 1px solid #1a2235; gap: 6px;
       }
       .player-row:last-child { border-bottom: none; }
       .pos-badge {
-        font-size: 0.6rem; font-weight: 700;
-        padding: 1px 4px; border-radius: 3px;
-        min-width: 38px; text-align: center;
-        letter-spacing: 0.03em; flex-shrink: 0;
+        font-size: 0.6rem; font-weight: 700; padding: 1px 4px; border-radius: 3px;
+        min-width: 38px; text-align: center; letter-spacing: 0.03em; flex-shrink: 0;
       }
       .pos-QB   { background: #3b1f6e; color: #c4b5fd; border: 1px solid #7c3aed55; }
       .pos-RB   { background: #052e16; color: #6ee7b7; border: 1px solid #05522455; }
       .pos-WRTE { background: #082f49; color: #7dd3fc; border: 1px solid #0c4a6e55; }
       .pos-FLEX { background: #3d1f05; color: #fcd34d; border: 1px solid #78350f55; }
       .pos-DST  { background: #3d0707; color: #fca5a5; border: 1px solid #7f1d1d55; }
-      .p-team {
-        font-size: 0.63rem; color: #6b7280; font-weight: 600;
-        min-width: 28px; flex-shrink: 0; letter-spacing: 0.04em;
-      }
-      .p-name {
-        flex: 1; color: #e5e7eb; font-weight: 500;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      }
+      .p-team { font-size: 0.63rem; color: #6b7280; font-weight: 600; min-width: 28px; flex-shrink: 0; letter-spacing: 0.04em; }
+      .p-name { flex: 1; color: #e5e7eb; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .p-sal  { color: #6b7280; min-width: 40px; text-align: right; flex-shrink: 0; }
       .p-proj { color: #9ca3af; min-width: 30px; text-align: right; flex-shrink: 0; }
-      .p-own  { color: #4b5563; min-width: 34px; text-align: right;
-                flex-shrink: 0; font-size: 0.65rem; }
+      .p-own  { color: #4b5563; min-width: 34px; text-align: right; flex-shrink: 0; font-size: 0.65rem; }
     </style>
     """
 
-    for row_idx, row_lineups in enumerate(rows):
-        # ── Build the iframe HTML for this row of cards ───────────────────────
+    for row_lineups in rows:
+        # ── iframe card row ───────────────────────────────────────────────────
         cards_html = ""
         for lineup in row_lineups:
-            lineup_num  = lineup.get("Lineup #", "?")
+            lineup_num    = lineup.get("Lineup #", "?")
             already_saved = lineup_num in saved_set
-            total_score = lineup.get(score_col, 0)
-            total_sal   = lineup.get("Total Salary", 0)
-            sal_rem     = lineup.get("Salary Remaining", SALARY_CAP - total_sal)
-            total_own   = lineup.get("Total Ownership", 0)
+            total_score   = lineup.get(score_col, 0)
+            total_sal     = lineup.get("Total Salary", 0)
+            sal_rem       = lineup.get("Salary Remaining", SALARY_CAP - total_sal)
+            total_own     = lineup.get("Total Ownership", 0)
 
             saved_badge_html = '<span class="saved-badge">✓ Saved</span>' if already_saved else ""
 
@@ -315,33 +294,28 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
               <div>{player_rows}</div>
             </div>"""
 
-        # Pad to always have 4 cells so grid alignment stays consistent
         for _ in range(cards_per_row - len(row_lineups)):
             cards_html += "<div></div>"
 
         full_html = f"""<!DOCTYPE html><html><head>{card_css}</head>
         <body><div class="cards-grid">{cards_html}</div></body></html>"""
 
-        # Height: header ~55px + 7 player rows ~28px each + padding
         iframe_height = 60 + (7 * 28) + 20
         components.html(full_html, height=iframe_height, scrolling=False)
 
-        # ── Save buttons rendered natively below each row ─────────────────────
-        if show_save_buttons:
-            btn_cols = st.columns(cards_per_row)
-            for col_idx, lineup in enumerate(row_lineups):
-                lineup_num = lineup.get("Lineup #", "?")
-                already_saved = lineup_num in saved_set
-                with btn_cols[col_idx]:
-                    if already_saved:
-                        st.success("✅ Saved", icon=None)
-                    else:
-                        if st.button("💾 Save Lineup", key=f"{id_prefix}_save_{lineup_num}",
-                                     use_container_width=True):
-                            st.session_state.saved_lineups.append(lineup)
-                            st.rerun()
-        else:
-            st.markdown("<div style='margin-bottom:8px'></div>", unsafe_allow_html=True)
+        # ── Checkboxes below each card in this row ────────────────────────────
+        cb_cols = st.columns(cards_per_row)
+        for col_idx, lineup in enumerate(row_lineups):
+            lineup_num = lineup.get("Lineup #", "?")
+            key = f"{id_prefix}_cb_{lineup_num}"
+            current = checked_state.get(lineup_num, False)
+            with cb_cols[col_idx]:
+                checked = st.checkbox(
+                    "Select",
+                    value=current,
+                    key=key,
+                )
+                checked_state[lineup_num] = checked
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -570,10 +544,36 @@ with tab_optimizer:
             """, unsafe_allow_html=True)
 
             saved_set = {r.get("Lineup #") for r in st.session_state.saved_lineups}
+
+            # Select All / Deselect All controls
+            sel_col1, sel_col2, sel_col3, _ = st.columns([1, 1, 1, 4])
+            with sel_col1:
+                if st.button("☑️ Select All", key="gen_select_all"):
+                    for r in results:
+                        st.session_state.gen_checked[r.get("Lineup #")] = True
+                    st.rerun()
+            with sel_col2:
+                if st.button("⬜ Deselect All", key="gen_deselect_all"):
+                    st.session_state.gen_checked = {}
+                    st.rerun()
+            with sel_col3:
+                n_checked = sum(1 for v in st.session_state.gen_checked.values() if v)
+                already_saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
+                to_save = [
+                    r for r in results
+                    if st.session_state.gen_checked.get(r.get("Lineup #"), False)
+                    and r.get("Lineup #") not in already_saved_nums
+                ]
+                if st.button(f"💾 Save Selected ({n_checked})", key="gen_save_selected",
+                             disabled=(n_checked == 0), type="primary"):
+                    st.session_state.saved_lineups.extend(to_save)
+                    st.session_state.gen_checked = {}
+                    st.rerun()
+
             render_lineup_cards(
                 results, player_lookup, optimize_by,
                 saved_set=saved_set,
-                show_save_buttons=True,
+                mode="gen",
                 id_prefix="gen",
             )
 
@@ -642,28 +642,37 @@ with tab_saved:
         # ── Saved Lineup Cards ────────────────────────────────────────────────
         st.markdown('<div class="section-header">📋 Saved Lineups</div>', unsafe_allow_html=True)
 
-        # No save buttons on the saved tab — show remove instead
-        # Render cards without save buttons
         saved_set_all = {r.get("Lineup #") for r in saved}
+
+        # Select All / Deselect All / Delete Selected controls
+        dsel_col1, dsel_col2, dsel_col3, _ = st.columns([1, 1, 1, 4])
+        with dsel_col1:
+            if st.button("☑️ Select All", key="saved_select_all"):
+                for r in saved:
+                    st.session_state.saved_checked[r.get("Lineup #")] = True
+                st.rerun()
+        with dsel_col2:
+            if st.button("⬜ Deselect All", key="saved_deselect_all"):
+                st.session_state.saved_checked = {}
+                st.rerun()
+        with dsel_col3:
+            n_del_checked = sum(1 for v in st.session_state.saved_checked.values() if v)
+            if st.button(f"🗑️ Delete Selected ({n_del_checked})", key="saved_delete_selected",
+                         disabled=(n_del_checked == 0)):
+                keep = [
+                    r for r in saved
+                    if not st.session_state.saved_checked.get(r.get("Lineup #"), False)
+                ]
+                st.session_state.saved_lineups = keep
+                st.session_state.saved_checked = {}
+                st.rerun()
+
         render_lineup_cards(
             saved, card_player_lookup, card_optimize_by,
             saved_set=saved_set_all,
-            show_save_buttons=False,
+            mode="saved",
             id_prefix="saved",
         )
-
-        # ── Remove a Lineup ───────────────────────────────────────────────────
-        st.markdown('<div class="section-header">🗑️ Remove a Lineup</div>', unsafe_allow_html=True)
-        remove_options = {
-            f"#{i+1} — QB: {r.get('QB','?')} | ${r.get('Total Salary', 0):,}": i
-            for i, r in enumerate(saved)
-        }
-        remove_label = st.selectbox("Select lineup to remove", ["— select —"] + list(remove_options.keys()))
-        if remove_label != "— select —":
-            if st.button("🗑️ Remove selected lineup"):
-                idx = remove_options[remove_label]
-                st.session_state.saved_lineups.pop(idx)
-                st.rerun()
 
         # ── Player Exposure ───────────────────────────────────────────────────
         st.markdown('<div class="section-header">📈 Player Exposure</div>', unsafe_allow_html=True)
