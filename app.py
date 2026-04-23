@@ -368,9 +368,10 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                     "🏷️ Tag",
                     value=current_tag,
                     placeholder="e.g. Cash, GPP...",
-                    key=f"tag_{lineup_num}",
+                    key=f"{id_prefix}_tag_{lineup_num}",
                     label_visibility="collapsed",
                 )
+                # Store under the canonical lineup_num regardless of prefix
                 st.session_state.lineup_tags[lineup_num] = new_tag
 
 
@@ -731,7 +732,7 @@ with tab_optimizer:
             saved_set = {r.get("Lineup #") for r in st.session_state.saved_lineups}
 
             # ── Controls row ──────────────────────────────────────────────────
-            sel_col1, sel_col2, sel_col3, sel_col4, _ = st.columns([1, 1, 1, 1, 3])
+            sel_col1, sel_col2, _ = st.columns([1, 1, 5])
             with sel_col1:
                 if st.button("☑️ Select All", key="gen_select_all"):
                     for r in results:
@@ -742,19 +743,6 @@ with tab_optimizer:
                 if st.button("⬜ Deselect All", key="gen_deselect_all"):
                     st.session_state.gen_checked = {}
                     st.session_state.cb_gen_gen += 1
-                    st.rerun()
-            with sel_col3:
-                n_checked = sum(1 for v in st.session_state.gen_checked.values() if v)
-                already_saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
-                to_save = [
-                    r for r in results
-                    if st.session_state.gen_checked.get(r.get("Lineup #"), False)
-                    and r.get("Lineup #") not in already_saved_nums
-                ]
-                if st.button(f"💾 Save Selected ({n_checked})", key="gen_save_selected",
-                             disabled=(n_checked == 0), type="primary"):
-                    st.session_state.saved_lineups.extend(to_save)
-                    st.session_state.gen_checked = {}
                     st.rerun()
 
             # ── Sort ──────────────────────────────────────────────────────────
@@ -808,6 +796,32 @@ with tab_optimizer:
                 mode="gen",
                 id_prefix="gen",
             )
+
+            # ── Save Selected (placed AFTER render so checkbox state is current) ──
+            st.markdown("---")
+            n_checked_now = sum(
+                1 for num, v in st.session_state.gen_checked.items()
+                if v and num in {r.get("Lineup #") for r in results}
+            )
+            already_saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
+            to_save_now = [
+                r for r in results
+                if st.session_state.gen_checked.get(r.get("Lineup #"), False)
+                and r.get("Lineup #") not in already_saved_nums
+            ]
+            save_col, _ = st.columns([1, 3])
+            with save_col:
+                if st.button(
+                    f"💾 Save Selected ({n_checked_now})",
+                    key="gen_save_selected",
+                    disabled=(n_checked_now == 0),
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    st.session_state.saved_lineups.extend(to_save_now)
+                    st.session_state.gen_checked = {}
+                    st.session_state.cb_gen_gen += 1
+                    st.rerun()
 
             # ── Summary ───────────────────────────────────────────────────────
             st.markdown('<div class="section-header">📊 Summary</div>', unsafe_allow_html=True)
