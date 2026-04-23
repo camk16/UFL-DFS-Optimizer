@@ -374,6 +374,13 @@ with st.sidebar:
     if force_stack:
         stack_count = st.radio("WR/TE Stackmates Required", options=[1, 2], index=0)
 
+    st.markdown('<div class="section-header">↩️ Bring-Back</div>', unsafe_allow_html=True)
+    force_bring_back = st.checkbox(
+        "Force Bring-Back",
+        value=False,
+        help="Requires at least 1 skill player (RB/WR/TE) from the opposing team of whichever QB is selected. Requires an Opponent column in your CSV."
+    )
+
     st.markdown("---")
     saved_count = len(st.session_state.saved_lineups)
     st.markdown(f"**💾 Saved Lineups:** {saved_count}")
@@ -455,17 +462,69 @@ with tab_optimizer:
         )
         display_df = df if not pos_filter else df[df["Position"].isin(pos_filter)]
 
-        show_cols = ["Player", "Position", "Team", "Salary", "Ownership"]
+        show_cols = ["Player", "Position", "Team", "Opponent", "Salary", "Ownership"]
+        show_cols = [c for c in show_cols if c in df.columns]
         for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/S"]:
             if c in df.columns:
                 show_cols.append(c)
         if "ID" in df.columns:
             show_cols.append("ID")
 
-        st.dataframe(
-            display_df[show_cols].sort_values("Salary", ascending=False),
-            use_container_width=True, hide_index=True,
-        )
+        pool_display = display_df[show_cols].sort_values("Salary", ascending=False).copy()
+
+        def color_scale(val, col_min, col_max, reverse=False):
+            """Return a background-color CSS string on a green-red gradient."""
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                return ""
+            if col_max == col_min:
+                ratio = 0.5
+            else:
+                ratio = (v - col_min) / (col_max - col_min)
+            if reverse:
+                ratio = 1 - ratio
+            ratio = max(0.0, min(1.0, ratio))
+            # Green (0,180,80) -> Yellow (220,180,0) -> Red (220,40,40)
+            if ratio >= 0.5:
+                r2 = ratio * 2 - 1
+                r = int(0   + r2 * 220)
+                g = int(180 - r2 * 140)
+                b = int(80  - r2 * 80)
+            else:
+                r2 = ratio * 2
+                r = int(220 - r2 * 220)
+                g = int(40  + r2 * 140)
+                b = int(40  + r2 * 40)
+            return f"background-color: rgba({r},{g},{b},0.30); color: #e5e7eb;"
+
+        def style_pool(df_s):
+            styles = pd.DataFrame("", index=df_s.index, columns=df_s.columns)
+            col_cfg = {
+                # col_name: (reverse_scale)
+                # reverse=True  -> high value = red, low = green
+                # reverse=False -> high value = green, low = red
+                "Salary":    (True,  df_s["Salary"].min()    if "Salary"    in df_s else 0,
+                                     df_s["Salary"].max()    if "Salary"    in df_s else 1),
+                "Ownership": (True,  df_s["Ownership"].min() if "Ownership" in df_s else 0,
+                                     df_s["Ownership"].max() if "Ownership" in df_s else 1),
+                "DK Points": (False, df_s["DK Points"].min() if "DK Points" in df_s else 0,
+                                     df_s["DK Points"].max() if "DK Points" in df_s else 1),
+                "Value":     (False, -8.0, 8.0),
+                "T.Val":     (False, df_s["T.Val"].min()     if "T.Val"     in df_s else 0,
+                                     df_s["T.Val"].max()     if "T.Val"     in df_s else 1),
+                "Leverage":  (False, df_s["Leverage"].min()  if "Leverage"  in df_s else 0,
+                                     df_s["Leverage"].max()  if "Leverage"  in df_s else 1),
+            }
+            for col, (rev, cmin, cmax) in col_cfg.items():
+                if col in df_s.columns:
+                    styles[col] = df_s[col].apply(
+                        lambda v, r=rev, mn=cmin, mx=cmax: color_scale(v, mn, mx, reverse=r)
+                    )
+            return styles
+
+        styled = pool_display.style.apply(style_pool, axis=None)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
         # ── Lock / Exclude ────────────────────────────────────────────────────
         st.markdown('<div class="section-header">🔒 Lock & Exclude Players</div>', unsafe_allow_html=True)
@@ -517,6 +576,7 @@ with tab_optimizer:
                         max_cumulative_ownership=max_ownership,
                         force_qb_stack=force_stack,
                         qb_stack_count=stack_count,
+                        force_bring_back=force_bring_back,
                         locked_players=locked,
                         excluded_players=excluded,
                         max_exposure=max_exposure_dict,
