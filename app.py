@@ -43,6 +43,10 @@ if "edited_pool" not in st.session_state:
     st.session_state.edited_pool = None   # user-edited version of df
 if "pool_csv_hash" not in st.session_state:
     st.session_state.pool_csv_hash = None # detect when a new CSV is uploaded
+if "csv_store" not in st.session_state:
+    st.session_state.csv_store = {}       # name -> raw CSV bytes
+if "active_csv_name" not in st.session_state:
+    st.session_state.active_csv_name = None
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -391,19 +395,74 @@ st.markdown('<div class="sub-title">DraftKings · Lineup Generator · Powered by
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div class="section-header">📁 Upload Projections</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">📁 Player Pools</div>', unsafe_allow_html=True)
     st.markdown("""
     <div class="info-box">
-    Upload your weekly CSV file. Required columns:<br>
-    <b>Player, Position, Team, Salary, Ownership</b><br><br>
+    Upload one or more CSV files and name each one (e.g. GPP, Cash).
+    Switch between them instantly using the dropdown.<br><br>
+    Required: <b>Player, Position, Team, Salary, Ownership</b><br>
     Optional: <b>DK Points, Value, T.Val, Leverage, Pts/$, ID</b>
     </div>
     """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader(
-        "Choose your CSV file", type=["csv"],
-        help="Download from your projections source and upload here each week."
+    # ── Upload + name a new CSV ───────────────────────────────────────────────
+    new_file = st.file_uploader(
+        "Upload a CSV", type=["csv"],
+        help="Upload a new player pool CSV then give it a name below.",
+        key="csv_uploader",
     )
+    csv_name_input = st.text_input(
+        "Pool name", placeholder="e.g. GPP, Cash, Week 5...",
+        key="csv_name_input",
+        label_visibility="collapsed",
+    )
+    if st.button("➕ Add Pool", disabled=(new_file is None or not csv_name_input.strip())):
+        name = csv_name_input.strip()
+        st.session_state.csv_store[name] = new_file.getvalue()
+        st.session_state.active_csv_name = name
+        # Reset edited pool when a new CSV is added
+        st.session_state.edited_pool = None
+        st.session_state.pool_csv_hash = None
+        st.rerun()
+
+    # ── Switch between stored CSVs ────────────────────────────────────────────
+    if st.session_state.csv_store:
+        pool_names = list(st.session_state.csv_store.keys())
+
+        # Keep active selection valid
+        if st.session_state.active_csv_name not in pool_names:
+            st.session_state.active_csv_name = pool_names[0]
+
+        selected_pool = st.selectbox(
+            "Active Pool",
+            options=pool_names,
+            index=pool_names.index(st.session_state.active_csv_name),
+            key="active_pool_select",
+        )
+        if selected_pool != st.session_state.active_csv_name:
+            st.session_state.active_csv_name = selected_pool
+            st.session_state.edited_pool = None
+            st.session_state.pool_csv_hash = None
+            st.rerun()
+
+        # Delete pool button
+        del_col, _ = st.columns([1, 2])
+        with del_col:
+            if st.button("🗑️ Remove Pool", key="del_pool"):
+                del st.session_state.csv_store[selected_pool]
+                if selected_pool == st.session_state.active_csv_name:
+                    remaining = list(st.session_state.csv_store.keys())
+                    st.session_state.active_csv_name = remaining[0] if remaining else None
+                st.session_state.edited_pool = None
+                st.session_state.pool_csv_hash = None
+                st.rerun()
+
+    # Expose active CSV as uploaded_file-compatible object for the rest of the app
+    import io
+    if st.session_state.active_csv_name and st.session_state.active_csv_name in st.session_state.csv_store:
+        uploaded_file = io.BytesIO(st.session_state.csv_store[st.session_state.active_csv_name])
+    else:
+        uploaded_file = None
 
     st.markdown('<div class="section-header">⚙️ Settings</div>', unsafe_allow_html=True)
 
@@ -649,80 +708,81 @@ with tab_optimizer:
         # ── Exposure Limits ───────────────────────────────────────────────────
         max_exposure_dict = {}
         min_exposure_dict = {}
-        if num_lineups > 1:
-            st.markdown('<div class="section-header">📈 Exposure Limits (Optional)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">📈 Exposure Limits (Optional)</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="info-box">
+        Exposure settings only apply when generating more than 1 lineup.
+        </div>
+        """, unsafe_allow_html=True)
 
-            # ── Position-level exposure ───────────────────────────────────────
-            st.markdown("**By Position** — max % any single player at that position can appear")
-            st.markdown("""
-            <div class="info-box" style="margin-bottom:0.5rem">
-            Leave a position blank to apply no limit. Enter a number 0–100 to cap
-            every player at that position to at most that % of lineups.
-            </div>
-            """, unsafe_allow_html=True)
+        # ── Position-level exposure ───────────────────────────────────────────
+        st.markdown("**By Position** — max % any single player at that position can appear")
+        st.markdown("""
+        <div class="info-box" style="margin-bottom:0.5rem">
+        Leave a position blank to apply no limit. Enter a number 0–100 to cap
+        every player at that position to at most that % of lineups.
+        </div>
+        """, unsafe_allow_html=True)
 
-            pos_exp_cols = st.columns(5)
-            pos_labels = ["QB", "RB", "WR", "TE", "DST"]
-            pos_max_pct = {}
-            for i, pos in enumerate(pos_labels):
-                with pos_exp_cols[i]:
-                    val = st.number_input(
-                        pos, min_value=0, max_value=100, value=0, step=5,
-                        key=f"pos_exp_{pos}",
-                        help=f"Max % of lineups any single {pos} can appear in. 0 = no limit.",
-                    )
-                    if val > 0:
-                        pos_max_pct[pos] = val
-
-            # Convert position % caps into per-player max lineup counts
-            if pos_max_pct:
-                for _, row in df.iterrows():
-                    pos = row["Position"]
-                    # Match WR/TE/DST variations
-                    pos_key = None
-                    if pos == "QB" and "QB" in pos_max_pct:
-                        pos_key = "QB"
-                    elif pos == "RB" and "RB" in pos_max_pct:
-                        pos_key = "RB"
-                    elif pos == "WR" and "WR" in pos_max_pct:
-                        pos_key = "WR"
-                    elif pos == "TE" and "TE" in pos_max_pct:
-                        pos_key = "TE"
-                    elif pos in ["DST", "D", "DEF"] and "DST" in pos_max_pct:
-                        pos_key = "DST"
-                    if pos_key:
-                        cap = max(1, int((pos_max_pct[pos_key] / 100) * num_lineups))
-                        player = row["Player"]
-                        # Only apply if stricter than any existing player-level cap
-                        if player not in max_exposure_dict or cap < max_exposure_dict[player]:
-                            max_exposure_dict[player] = cap
-
-            st.markdown("---")
-
-            # ── Player-level exposure ─────────────────────────────────────────
-            st.markdown("**By Player** — fine-tune min/max for specific players")
-            st.markdown("""
-            <div class="info-box">
-            <b>Min</b> = player must appear in at least this % of lineups.<br>
-            <b>Max</b> = player can appear in at most this % of lineups.<br>
-            Player-level caps override position-level caps when stricter.
-            </div>
-            """, unsafe_allow_html=True)
-            exp_players = st.multiselect(
-                "Set exposure limits for specific players",
-                options=sorted(df["Player"].tolist()), default=[],
-            )
-            for p in exp_players:
-                min_pct, max_pct = st.select_slider(
-                    f"{p} — Exposure Range %",
-                    options=list(range(0, 101, 5)),
-                    value=(0, 50),
-                    key=f"exp_{p}",
+        pos_exp_cols = st.columns(5)
+        pos_labels = ["QB", "RB", "WR", "TE", "DST"]
+        pos_max_pct = {}
+        for i, pos in enumerate(pos_labels):
+            with pos_exp_cols[i]:
+                val = st.number_input(
+                    pos, min_value=0, max_value=100, value=0, step=5,
+                    key=f"pos_exp_{pos}",
+                    help=f"Max % of lineups any single {pos} can appear in. 0 = no limit.",
                 )
+                if val > 0:
+                    pos_max_pct[pos] = val
+
+        # Convert position % caps into per-player max lineup counts
+        if pos_max_pct and num_lineups > 1:
+            for _, row in df.iterrows():
+                pos = row["Position"]
+                pos_key = None
+                if pos == "QB" and "QB" in pos_max_pct:
+                    pos_key = "QB"
+                elif pos == "RB" and "RB" in pos_max_pct:
+                    pos_key = "RB"
+                elif pos == "WR" and "WR" in pos_max_pct:
+                    pos_key = "WR"
+                elif pos == "TE" and "TE" in pos_max_pct:
+                    pos_key = "TE"
+                elif pos in ["DST", "D", "DEF"] and "DST" in pos_max_pct:
+                    pos_key = "DST"
+                if pos_key:
+                    cap = max(1, int((pos_max_pct[pos_key] / 100) * num_lineups))
+                    player = row["Player"]
+                    if player not in max_exposure_dict or cap < max_exposure_dict[player]:
+                        max_exposure_dict[player] = cap
+
+        st.markdown("---")
+
+        # ── Player-level exposure ─────────────────────────────────────────────
+        st.markdown("**By Player** — fine-tune min/max for specific players")
+        st.markdown("""
+        <div class="info-box">
+        <b>Min</b> = player must appear in at least this % of lineups.<br>
+        <b>Max</b> = player can appear in at most this % of lineups.<br>
+        Player-level caps override position-level caps when stricter.
+        </div>
+        """, unsafe_allow_html=True)
+        exp_players = st.multiselect(
+            "Set exposure limits for specific players",
+            options=sorted(df["Player"].tolist()), default=[],
+        )
+        for p in exp_players:
+            min_pct, max_pct = st.select_slider(
+                f"{p} — Exposure Range %",
+                options=list(range(0, 101, 5)),
+                value=(0, 50),
+                key=f"exp_{p}",
+            )
+            if num_lineups > 1:
                 if max_pct > 0:
-                    player_cap = max(1, int((max_pct / 100) * num_lineups))
-                    # Player-level is always applied (overrides position cap)
-                    max_exposure_dict[p] = player_cap
+                    max_exposure_dict[p] = max(1, int((max_pct / 100) * num_lineups))
                 if min_pct > 0:
                     min_exposure_dict[p] = max(1, int((min_pct / 100) * num_lineups))
 
