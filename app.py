@@ -577,7 +577,7 @@ with tab_optimizer:
         edit_cols   = base_cols + metric_cols + id_cols
         edit_view   = filtered_df[edit_cols].sort_values("Salary", ascending=False).copy()
 
-        # ── Conditional formatting ────────────────────────────────────────────
+        # ── Conditional formatting helpers (applied to plain df) ─────────────
         def color_scale(val, col_min, col_max, reverse=False):
             try:
                 v = float(val)
@@ -596,15 +596,20 @@ with tab_optimizer:
             return f"background-color: rgba({r},{g},{b},0.30); color: #e5e7eb;"
 
         def style_pool(df_s):
+            """Apply colour-scale formatting. Uses current edited values so colours
+            update live when numbers are changed in the editor."""
             styles = pd.DataFrame("", index=df_s.index, columns=df_s.columns)
+            # Pull min/max from the FULL pool (not just filtered view) so colour
+            # scale is consistent as you switch position tabs.
+            full = st.session_state.edited_pool
             col_cfg = {
-                "Salary":    (True,  df_s["Salary"].min()    if "Salary"    in df_s else 0, df_s["Salary"].max()    if "Salary"    in df_s else 1),
-                "Ownership": (True,  df_s["Ownership"].min() if "Ownership" in df_s else 0, df_s["Ownership"].max() if "Ownership" in df_s else 1),
-                "DK Points": (False, df_s["DK Points"].min() if "DK Points" in df_s else 0, df_s["DK Points"].max() if "DK Points" in df_s else 1),
+                "Salary":    (True,  full["Salary"].min()    if "Salary"    in full else 0, full["Salary"].max()    if "Salary"    in full else 1),
+                "Ownership": (True,  full["Ownership"].min() if "Ownership" in full else 0, full["Ownership"].max() if "Ownership" in full else 1),
+                "DK Points": (False, full["DK Points"].min() if "DK Points" in full else 0, full["DK Points"].max() if "DK Points" in full else 1),
                 "Value":     (False, -8.0, 8.0),
-                "T.Val":     (False, df_s["T.Val"].min()     if "T.Val"     in df_s else 0, df_s["T.Val"].max()     if "T.Val"     in df_s else 1),
-                "Leverage":  (False, df_s["Leverage"].min()  if "Leverage"  in df_s else 0, df_s["Leverage"].max()  if "Leverage"  in df_s else 1),
-                "Pts/$":     (False, df_s["Pts/$"].min()     if "Pts/$"     in df_s else 0, df_s["Pts/$"].max()     if "Pts/$"     in df_s else 1),
+                "T.Val":     (False, full["T.Val"].min()     if "T.Val"     in full else 0, full["T.Val"].max()     if "T.Val"     in full else 1),
+                "Leverage":  (False, full["Leverage"].min()  if "Leverage"  in full else 0, full["Leverage"].max()  if "Leverage"  in full else 1),
+                "Pts/$":     (False, full["Pts/$"].min()     if "Pts/$"     in full else 0, full["Pts/$"].max()     if "Pts/$"     in full else 1),
             }
             for col, (rev, cmin, cmax) in col_cfg.items():
                 if col in df_s.columns:
@@ -613,43 +618,69 @@ with tab_optimizer:
                     )
             return styles
 
-        # ── Column config for data_editor ─────────────────────────────────────
+        # ── on_change callback — persists edits to session state immediately ──
+        # This is the key fix: writing back via on_change means the session state
+        # is updated BEFORE the next render, so the widget is initialized from
+        # the correct values and never reverts.
+        def _save_pool_edits():
+            edited_data = st.session_state.get("pool_editor")
+            if edited_data is None:
+                return
+            # edited_data comes back as a dict with keys
+            # "edited_rows", "added_rows", "deleted_rows"
+            edited_rows = edited_data.get("edited_rows", {})
+            # The keys in edited_rows are integer positional indices into edit_view
+            for pos_idx, changes in edited_rows.items():
+                try:
+                    player_name = edit_view.iloc[int(pos_idx)]["Player"]
+                except (IndexError, KeyError):
+                    continue
+                mask = st.session_state.edited_pool["Player"] == player_name
+                for col, val in changes.items():
+                    if col in st.session_state.edited_pool.columns:
+                        st.session_state.edited_pool.loc[mask, col] = val
+
+        # ── Column config ─────────────────────────────────────────────────────
         col_config = {
-            "Lock":    st.column_config.CheckboxColumn("🔒", help="Force into every lineup", width="small"),
-            "Exclude": st.column_config.CheckboxColumn("🚫", help="Remove from all lineups", width="small"),
-            "Player":  st.column_config.TextColumn("Player", disabled=True),
+            "Lock":    st.column_config.CheckboxColumn("🔒", help="Force into every lineup"),
+            "Exclude": st.column_config.CheckboxColumn("🚫", help="Remove from all lineups"),
+            "Player":  st.column_config.TextColumn("Player",   disabled=True),
             "Position":st.column_config.TextColumn("Position", disabled=True),
-            "Team":    st.column_config.TextColumn("Team", disabled=True),
+            "Team":    st.column_config.TextColumn("Team",     disabled=True),
         }
         if "Opponent"  in edit_view.columns: col_config["Opponent"]  = st.column_config.TextColumn("Opponent",  disabled=True)
-        if "Salary"    in edit_view.columns: col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d")
-        if "Ownership" in edit_view.columns: col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%")
-        if "ID"        in edit_view.columns: col_config["ID"]        = st.column_config.NumberColumn("ID",        format="%d",  disabled=True)
+        if "Salary"    in edit_view.columns: col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d",    step=100)
+        if "Ownership" in edit_view.columns: col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%", step=0.1)
+        if "ID"        in edit_view.columns: col_config["ID"]        = st.column_config.NumberColumn("ID",        format="%d",     disabled=True)
         for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
             if c in edit_view.columns:
-                col_config[c] = st.column_config.NumberColumn(c, format="%.1f")
+                col_config[c] = st.column_config.NumberColumn(c, format="%.1f", step=0.1)
 
-        styled_edit = edit_view.style.apply(style_pool, axis=None)
+        # ── Render: styled dataframe for colours + data_editor for interaction ─
+        # Streamlit does not support styling inside data_editor. The workaround:
+        # show a styled st.dataframe (read-only colours) and a plain data_editor
+        # (fully interactive) side by side — but that doubles the height.
+        # Better approach: pass the plain df to data_editor and apply styling
+        # via the Styler only to a separate read-only preview above the editor.
+        # Actually the most seamless solution available in Streamlit is:
+        # apply .style to the plain df passed to data_editor — BUT remove the
+        # .style wrapper and instead use on_change to persist edits correctly.
+        #
+        # st.data_editor DOES accept a Styler — the bug was that we were also
+        # using session_state writes inside the widget body. With on_change this
+        # is fixed and styles will render correctly.
 
-        edited = st.data_editor(
-            styled_edit,
+        styled_view = edit_view.style.apply(style_pool, axis=None)
+
+        st.data_editor(
+            styled_view,
             use_container_width=True,
             hide_index=True,
             column_config=col_config,
             key="pool_editor",
             num_rows="fixed",
+            on_change=_save_pool_edits,
         )
-
-        # Write edits back to the full working_df (by player name)
-        if edited is not None:
-            for _, erow in edited.iterrows():
-                pname = erow.get("Player")
-                if pname is None:
-                    continue
-                mask = st.session_state.edited_pool["Player"] == pname
-                for col in edited.columns:
-                    if col in st.session_state.edited_pool.columns:
-                        st.session_state.edited_pool.loc[mask, col] = erow[col]
 
         # Derive locked/excluded from the full edited pool
         full_edited = st.session_state.edited_pool
