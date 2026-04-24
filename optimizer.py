@@ -1,4 +1,5 @@
 import pulp
+import random
 import pandas as pd
 import re
 
@@ -88,6 +89,7 @@ def optimize_lineups(
     excluded_players=None,
     min_exposure=None,
     max_exposure=None,
+    variance_pct=0.0,
 ):
     """
     Generate one or more optimized DFS lineups using Integer Linear Programming.
@@ -153,12 +155,20 @@ def optimize_lineups(
     for lineup_num in range(num_lineups):
         prob = pulp.LpProblem(f"UFL_DFS_Lineup_{lineup_num}", pulp.LpMaximize)
 
+        # --- Apply variance noise to projections ---
+        if variance_pct > 0:
+            noisy_proj = pool[optimize_by].apply(
+                lambda v: v * (1 + random.uniform(-variance_pct, variance_pct))
+            )
+        else:
+            noisy_proj = pool[optimize_by]
+
         # --- Decision Variables ---
         # x[i] = 1 if player i is selected in this lineup
         x = {i: pulp.LpVariable(f"x_{i}", cat="Binary") for i in pool.index}
 
         # --- Objective Function ---
-        prob += pulp.lpSum(pool.loc[i, optimize_by] * x[i] for i in pool.index)
+        prob += pulp.lpSum(noisy_proj.loc[i] * x[i] for i in pool.index)
 
         # --- Salary Constraints ---
         prob += pulp.lpSum(pool.loc[i, "Salary"] * x[i] for i in pool.index) <= max_salary
