@@ -533,12 +533,9 @@ with tab_optimizer:
             st.session_state.pool_csv_hash = csv_hash
             st.session_state.edited_pool = None
 
-        # Initialise edited pool from raw df (adds Lock/Exclude columns)
+        # Initialise edited pool from raw df
         if st.session_state.edited_pool is None:
-            base = df.copy()
-            base.insert(0, "Lock",    False)
-            base.insert(1, "Exclude", False)
-            st.session_state.edited_pool = base
+            st.session_state.edited_pool = df.copy()
 
         working_df = st.session_state.edited_pool.copy()
 
@@ -567,17 +564,18 @@ with tab_optimizer:
                     pos_set.add(p)
             filtered_df = working_df[working_df["Position"].isin(pos_set)].copy()
 
-        # ── Build column list for editor ──────────────────────────────────────
-        base_cols   = ["Lock", "Exclude", "Player", "Position", "Team", "Opponent",
-                        "Salary", "Ownership"]
-        base_cols   = [c for c in base_cols if c in filtered_df.columns]
-        metric_cols = [c for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]
-                       if c in filtered_df.columns]
-        id_cols     = ["ID"] if "ID" in filtered_df.columns else []
-        edit_cols   = base_cols + metric_cols + id_cols
-        edit_view   = filtered_df[edit_cols].sort_values("Salary", ascending=False).copy()
+        # ── Build display columns ─────────────────────────────────────────────
+        show_cols = ["Player", "Position", "Team", "Opponent", "Salary", "Ownership"]
+        show_cols = [c for c in show_cols if c in filtered_df.columns]
+        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
+            if c in filtered_df.columns:
+                show_cols.append(c)
+        if "ID" in filtered_df.columns:
+            show_cols.append("ID")
 
-        # ── Conditional formatting helpers (applied to plain df) ─────────────
+        pool_display = filtered_df[show_cols].sort_values("Salary", ascending=False).copy()
+
+        # ── Conditional formatting ────────────────────────────────────────────
         def color_scale(val, col_min, col_max, reverse=False):
             try:
                 v = float(val)
@@ -596,20 +594,17 @@ with tab_optimizer:
             return f"background-color: rgba({r},{g},{b},0.30); color: #e5e7eb;"
 
         def style_pool(df_s):
-            """Apply colour-scale formatting. Uses current edited values so colours
-            update live when numbers are changed in the editor."""
             styles = pd.DataFrame("", index=df_s.index, columns=df_s.columns)
-            # Pull min/max from the FULL pool (not just filtered view) so colour
-            # scale is consistent as you switch position tabs.
+            # Use full pool for min/max so scale is consistent across position filters
             full = st.session_state.edited_pool
             col_cfg = {
-                "Salary":    (True,  full["Salary"].min()    if "Salary"    in full else 0, full["Salary"].max()    if "Salary"    in full else 1),
-                "Ownership": (True,  full["Ownership"].min() if "Ownership" in full else 0, full["Ownership"].max() if "Ownership" in full else 1),
-                "DK Points": (False, full["DK Points"].min() if "DK Points" in full else 0, full["DK Points"].max() if "DK Points" in full else 1),
+                "Salary":    (True,  full["Salary"].min()    if "Salary"    in full.columns else 0, full["Salary"].max()    if "Salary"    in full.columns else 1),
+                "Ownership": (True,  full["Ownership"].min() if "Ownership" in full.columns else 0, full["Ownership"].max() if "Ownership" in full.columns else 1),
+                "DK Points": (False, full["DK Points"].min() if "DK Points" in full.columns else 0, full["DK Points"].max() if "DK Points" in full.columns else 1),
                 "Value":     (False, -8.0, 8.0),
-                "T.Val":     (False, full["T.Val"].min()     if "T.Val"     in full else 0, full["T.Val"].max()     if "T.Val"     in full else 1),
-                "Leverage":  (False, full["Leverage"].min()  if "Leverage"  in full else 0, full["Leverage"].max()  if "Leverage"  in full else 1),
-                "Pts/$":     (False, full["Pts/$"].min()     if "Pts/$"     in full else 0, full["Pts/$"].max()     if "Pts/$"     in full else 1),
+                "T.Val":     (False, full["T.Val"].min()     if "T.Val"     in full.columns else 0, full["T.Val"].max()     if "T.Val"     in full.columns else 1),
+                "Leverage":  (False, full["Leverage"].min()  if "Leverage"  in full.columns else 0, full["Leverage"].max()  if "Leverage"  in full.columns else 1),
+                "Pts/$":     (False, full["Pts/$"].min()     if "Pts/$"     in full.columns else 0, full["Pts/$"].max()     if "Pts/$"     in full.columns else 1),
             }
             for col, (rev, cmin, cmax) in col_cfg.items():
                 if col in df_s.columns:
@@ -618,98 +613,37 @@ with tab_optimizer:
                     )
             return styles
 
-        # ── on_change callback — persists edits to session state immediately ──
-        # This is the key fix: writing back via on_change means the session state
-        # is updated BEFORE the next render, so the widget is initialized from
-        # the correct values and never reverts.
-        def _save_pool_edits():
-            edited_data = st.session_state.get("pool_editor")
-            if edited_data is None:
-                return
-            # edited_data comes back as a dict with keys
-            # "edited_rows", "added_rows", "deleted_rows"
-            edited_rows = edited_data.get("edited_rows", {})
-            # The keys in edited_rows are integer positional indices into edit_view
-            for pos_idx, changes in edited_rows.items():
-                try:
-                    player_name = edit_view.iloc[int(pos_idx)]["Player"]
-                except (IndexError, KeyError):
-                    continue
-                mask = st.session_state.edited_pool["Player"] == player_name
-                for col, val in changes.items():
-                    if col in st.session_state.edited_pool.columns:
-                        st.session_state.edited_pool.loc[mask, col] = val
+        styled = pool_display.style.apply(style_pool, axis=None)
 
-        # ── Column config ─────────────────────────────────────────────────────
-        col_config = {
-            "Lock":    st.column_config.CheckboxColumn("🔒", help="Force into every lineup"),
-            "Exclude": st.column_config.CheckboxColumn("🚫", help="Remove from all lineups"),
-            "Player":  st.column_config.TextColumn("Player",   disabled=True),
-            "Position":st.column_config.TextColumn("Position", disabled=True),
-            "Team":    st.column_config.TextColumn("Team",     disabled=True),
-        }
-        if "Opponent"  in edit_view.columns: col_config["Opponent"]  = st.column_config.TextColumn("Opponent",  disabled=True)
-        if "Salary"    in edit_view.columns: col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d",    step=100)
-        if "Ownership" in edit_view.columns: col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%", step=0.1)
-        if "ID"        in edit_view.columns: col_config["ID"]        = st.column_config.NumberColumn("ID",        format="%d",     disabled=True)
+        col_config = {}
+        if "Salary"    in pool_display.columns: col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d")
+        if "Ownership" in pool_display.columns: col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%")
+        if "ID"        in pool_display.columns: col_config["ID"]        = st.column_config.NumberColumn("ID",        format="%d")
         for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
-            if c in edit_view.columns:
-                col_config[c] = st.column_config.NumberColumn(c, format="%.1f", step=0.1)
+            if c in pool_display.columns:
+                col_config[c] = st.column_config.NumberColumn(c, format="%.1f")
 
-        # ── Two-widget approach: styled read-only view + plain editor ──────────
-        # st.data_editor silently drops Styler formatting — confirmed Streamlit
-        # limitation. Solution: show a styled st.dataframe for colours (no Lock/
-        # Exclude cols) directly above a plain st.data_editor for all interaction.
-        # They share the same session_state so edits propagate immediately.
+        st.dataframe(styled, use_container_width=True, hide_index=True, column_config=col_config)
 
-        # Styled read-only view — numeric cols only, no Lock/Exclude
-        style_cols = [c for c in edit_view.columns if c not in ("Lock", "Exclude")]
-        style_view = edit_view[style_cols].copy()
+        # ── Lock / Exclude ────────────────────────────────────────────────────
+        st.markdown('<div class="section-header">🔒 Lock & Exclude Players</div>', unsafe_allow_html=True)
+        # Use full edited pool player list for multiselects
+        all_players = st.session_state.edited_pool["Player"].tolist()
+        col_lock, col_excl = st.columns(2)
+        with col_lock:
+            st.markdown("**Lock Players** — Force into every lineup")
+            locked = st.multiselect("Select players to lock",
+                options=sorted(all_players), default=[])
+        with col_excl:
+            st.markdown("**Exclude Players** — Remove from all lineups")
+            excluded = st.multiselect("Select players to exclude",
+                options=sorted(all_players), default=[])
 
-        # Build a col_config without Lock/Exclude for the styled view
-        style_col_config = {k: v for k, v in col_config.items() if k not in ("Lock", "Exclude")}
-
-        styled_df = style_view.style.apply(style_pool, axis=None)
-        st.dataframe(
-            styled_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config=style_col_config,
-        )
-
-        # Plain editor — Lock/Exclude + all columns, no styling (just interaction)
-        st.caption("✏️ Edit values below · 🔒 Lock · 🚫 Exclude")
-        editor_cols = ["Lock", "Exclude", "Player", "Salary", "Ownership"] +                       [c for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"] if c in edit_view.columns]
-        editor_view = edit_view[editor_cols].copy()
-
-        editor_col_config = {
-            "Lock":    st.column_config.CheckboxColumn("🔒 Lock",    help="Force into every lineup"),
-            "Exclude": st.column_config.CheckboxColumn("🚫 Exclude", help="Remove from all lineups"),
-            "Player":  st.column_config.TextColumn("Player", disabled=True),
-        }
-        if "Salary"    in editor_view.columns: editor_col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d",    step=100)
-        if "Ownership" in editor_view.columns: editor_col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%", step=0.1)
-        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
-            if c in editor_view.columns:
-                editor_col_config[c] = st.column_config.NumberColumn(c, format="%.1f", step=0.1)
-
-        st.data_editor(
-            editor_view,
-            use_container_width=True,
-            hide_index=True,
-            column_config=editor_col_config,
-            key="pool_editor",
-            num_rows="fixed",
-            on_change=_save_pool_edits,
-        )
-
-        # Derive locked/excluded from the full edited pool
-        full_edited = st.session_state.edited_pool
-        locked   = full_edited[full_edited["Lock"]    == True]["Player"].tolist()
-        excluded = full_edited[full_edited["Exclude"] == True]["Player"].tolist()
-
-        # Use edited pool as the dataframe for the optimizer
-        df = full_edited.drop(columns=["Lock", "Exclude"], errors="ignore").copy()
+        # Use edited pool (without Lock/Exclude cols) as df for the optimizer
+        df = st.session_state.edited_pool.drop(
+            columns=[c for c in ["Lock","Exclude"] if c in st.session_state.edited_pool.columns],
+            errors="ignore"
+        ).copy()
         player_lookup = build_player_lookup(df)
 
         # ── Exposure Limits ───────────────────────────────────────────────────
