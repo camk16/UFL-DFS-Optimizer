@@ -656,27 +656,48 @@ with tab_optimizer:
             if c in edit_view.columns:
                 col_config[c] = st.column_config.NumberColumn(c, format="%.1f", step=0.1)
 
-        # ── Render: styled dataframe for colours + data_editor for interaction ─
-        # Streamlit does not support styling inside data_editor. The workaround:
-        # show a styled st.dataframe (read-only colours) and a plain data_editor
-        # (fully interactive) side by side — but that doubles the height.
-        # Better approach: pass the plain df to data_editor and apply styling
-        # via the Styler only to a separate read-only preview above the editor.
-        # Actually the most seamless solution available in Streamlit is:
-        # apply .style to the plain df passed to data_editor — BUT remove the
-        # .style wrapper and instead use on_change to persist edits correctly.
-        #
-        # st.data_editor DOES accept a Styler — the bug was that we were also
-        # using session_state writes inside the widget body. With on_change this
-        # is fixed and styles will render correctly.
+        # ── Two-widget approach: styled read-only view + plain editor ──────────
+        # st.data_editor silently drops Styler formatting — confirmed Streamlit
+        # limitation. Solution: show a styled st.dataframe for colours (no Lock/
+        # Exclude cols) directly above a plain st.data_editor for all interaction.
+        # They share the same session_state so edits propagate immediately.
 
-        styled_view = edit_view.style.apply(style_pool, axis=None)
+        # Styled read-only view — numeric cols only, no Lock/Exclude
+        style_cols = [c for c in edit_view.columns if c not in ("Lock", "Exclude")]
+        style_view = edit_view[style_cols].copy()
 
-        st.data_editor(
-            styled_view,
+        # Build a col_config without Lock/Exclude for the styled view
+        style_col_config = {k: v for k, v in col_config.items() if k not in ("Lock", "Exclude")}
+
+        styled_df = style_view.style.apply(style_pool, axis=None)
+        st.dataframe(
+            styled_df,
             use_container_width=True,
             hide_index=True,
-            column_config=col_config,
+            column_config=style_col_config,
+        )
+
+        # Plain editor — Lock/Exclude + all columns, no styling (just interaction)
+        st.caption("✏️ Edit values below · 🔒 Lock · 🚫 Exclude")
+        editor_cols = ["Lock", "Exclude", "Player", "Salary", "Ownership"] +                       [c for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"] if c in edit_view.columns]
+        editor_view = edit_view[editor_cols].copy()
+
+        editor_col_config = {
+            "Lock":    st.column_config.CheckboxColumn("🔒 Lock",    help="Force into every lineup"),
+            "Exclude": st.column_config.CheckboxColumn("🚫 Exclude", help="Remove from all lineups"),
+            "Player":  st.column_config.TextColumn("Player", disabled=True),
+        }
+        if "Salary"    in editor_view.columns: editor_col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d",    step=100)
+        if "Ownership" in editor_view.columns: editor_col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%", step=0.1)
+        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
+            if c in editor_view.columns:
+                editor_col_config[c] = st.column_config.NumberColumn(c, format="%.1f", step=0.1)
+
+        st.data_editor(
+            editor_view,
+            use_container_width=True,
+            hide_index=True,
+            column_config=editor_col_config,
             key="pool_editor",
             num_rows="fixed",
             on_change=_save_pool_edits,
