@@ -39,6 +39,10 @@ if "active_set_name" not in st.session_state:
     st.session_state.active_set_name = None  # None = show live results
 if "gen_display_metric" not in st.session_state:
     st.session_state.gen_display_metric = None  # chosen display metric on gen tab
+if "edited_pool" not in st.session_state:
+    st.session_state.edited_pool = None   # user-edited version of df
+if "pool_csv_hash" not in st.session_state:
+    st.session_state.pool_csv_hash = None # detect when a new CSV is uploaded
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -444,6 +448,15 @@ with st.sidebar:
         help="Requires at least 1 skill player (RB/WR/TE) from the opposing team of whichever QB is selected. Requires an Opponent column in your CSV."
     )
 
+    st.markdown('<div class="section-header">🎲 Variance</div>', unsafe_allow_html=True)
+    variance_pct = st.slider(
+        "Projection Noise %",
+        min_value=0, max_value=50, value=0, step=5,
+        help="Adds random noise to each player's projection before building each lineup. "
+             "0% = pure optimization. 20% means each player's value is randomly adjusted "
+             "by up to ±20%, producing more lineup diversity across a multi-lineup run."
+    )
+
     st.markdown("---")
     saved_count = len(st.session_state.saved_lineups)
     st.markdown(f"**💾 Saved Lineups:** {saved_count}")
@@ -514,66 +527,84 @@ with tab_optimizer:
         # ── Player Pool ───────────────────────────────────────────────────────
         st.markdown('<div class="section-header">📊 Player Pool</div>', unsafe_allow_html=True)
 
-        pos_filter = st.multiselect(
-            "Filter by Position", options=sorted(df["Position"].unique()), default=[],
+        # Detect new CSV upload — reset edited pool
+        csv_hash = str(len(df)) + str(df["Player"].iloc[0] if len(df) > 0 else "")
+        if st.session_state.pool_csv_hash != csv_hash:
+            st.session_state.pool_csv_hash = csv_hash
+            st.session_state.edited_pool = None
+
+        # Initialise edited pool from raw df (adds Lock/Exclude columns)
+        if st.session_state.edited_pool is None:
+            base = df.copy()
+            base.insert(0, "Lock",    False)
+            base.insert(1, "Exclude", False)
+            st.session_state.edited_pool = base
+
+        working_df = st.session_state.edited_pool.copy()
+
+        # ── Position filter toggles (multi-select) ────────────────────────────
+        # FLEX = WR + RB + TE combined
+        POS_FILTER_OPTS = ["QB", "RB", "WR", "TE", "FLEX", "DST"]
+        active_pos = st.multiselect(
+            "Filter positions",
+            options=POS_FILTER_OPTS,
+            default=[],
+            label_visibility="collapsed",
+            placeholder="ALL positions — click to filter by position",
+            key="pool_pos_filter",
         )
-        display_df = df if not pos_filter else df[df["Position"].isin(pos_filter)]
 
-        show_cols = ["Player", "Position", "Team", "Opponent", "Salary", "Ownership"]
-        show_cols = [c for c in show_cols if c in df.columns]
-        for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
-            if c in df.columns:
-                show_cols.append(c)
-        if "ID" in df.columns:
-            show_cols.append("ID")
+        if not active_pos:
+            filtered_df = working_df.copy()
+        else:
+            pos_set = set()
+            for p in active_pos:
+                if p == "FLEX":
+                    pos_set.update(["WR", "RB", "TE"])
+                elif p == "DST":
+                    pos_set.update(["DST", "D", "DEF"])
+                else:
+                    pos_set.add(p)
+            filtered_df = working_df[working_df["Position"].isin(pos_set)].copy()
 
-        pool_display = display_df[show_cols].sort_values("Salary", ascending=False).copy()
+        # ── Build column list for editor ──────────────────────────────────────
+        base_cols   = ["Lock", "Exclude", "Player", "Position", "Team", "Opponent",
+                        "Salary", "Ownership"]
+        base_cols   = [c for c in base_cols if c in filtered_df.columns]
+        metric_cols = [c for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]
+                       if c in filtered_df.columns]
+        id_cols     = ["ID"] if "ID" in filtered_df.columns else []
+        edit_cols   = base_cols + metric_cols + id_cols
+        edit_view   = filtered_df[edit_cols].sort_values("Salary", ascending=False).copy()
 
+        # ── Conditional formatting ────────────────────────────────────────────
         def color_scale(val, col_min, col_max, reverse=False):
-            """Return a background-color CSS string on a green-red gradient."""
             try:
                 v = float(val)
             except (TypeError, ValueError):
                 return ""
-            if col_max == col_min:
-                ratio = 0.5
-            else:
-                ratio = (v - col_min) / (col_max - col_min)
+            ratio = (v - col_min) / (col_max - col_min) if col_max != col_min else 0.5
             if reverse:
                 ratio = 1 - ratio
             ratio = max(0.0, min(1.0, ratio))
-            # Green (0,180,80) -> Yellow (220,180,0) -> Red (220,40,40)
             if ratio >= 0.5:
                 r2 = ratio * 2 - 1
-                r = int(0   + r2 * 220)
-                g = int(180 - r2 * 140)
-                b = int(80  - r2 * 80)
+                r = int(r2 * 220); g = int(180 - r2 * 140); b = int(80 - r2 * 80)
             else:
                 r2 = ratio * 2
-                r = int(220 - r2 * 220)
-                g = int(40  + r2 * 140)
-                b = int(40  + r2 * 40)
+                r = int(220 - r2 * 220); g = int(40 + r2 * 140); b = int(40 + r2 * 40)
             return f"background-color: rgba({r},{g},{b},0.30); color: #e5e7eb;"
 
         def style_pool(df_s):
             styles = pd.DataFrame("", index=df_s.index, columns=df_s.columns)
             col_cfg = {
-                # col_name: (reverse_scale)
-                # reverse=True  -> high value = red, low = green
-                # reverse=False -> high value = green, low = red
-                "Salary":    (True,  df_s["Salary"].min()    if "Salary"    in df_s else 0,
-                                     df_s["Salary"].max()    if "Salary"    in df_s else 1),
-                "Ownership": (True,  df_s["Ownership"].min() if "Ownership" in df_s else 0,
-                                     df_s["Ownership"].max() if "Ownership" in df_s else 1),
-                "DK Points": (False, df_s["DK Points"].min() if "DK Points" in df_s else 0,
-                                     df_s["DK Points"].max() if "DK Points" in df_s else 1),
+                "Salary":    (True,  df_s["Salary"].min()    if "Salary"    in df_s else 0, df_s["Salary"].max()    if "Salary"    in df_s else 1),
+                "Ownership": (True,  df_s["Ownership"].min() if "Ownership" in df_s else 0, df_s["Ownership"].max() if "Ownership" in df_s else 1),
+                "DK Points": (False, df_s["DK Points"].min() if "DK Points" in df_s else 0, df_s["DK Points"].max() if "DK Points" in df_s else 1),
                 "Value":     (False, -8.0, 8.0),
-                "T.Val":     (False, df_s["T.Val"].min()     if "T.Val"     in df_s else 0,
-                                     df_s["T.Val"].max()     if "T.Val"     in df_s else 1),
-                "Leverage":  (False, df_s["Leverage"].min()  if "Leverage"  in df_s else 0,
-                                     df_s["Leverage"].max()  if "Leverage"  in df_s else 1),
-                "Pts/$":     (False, df_s["Pts/$"].min()     if "Pts/$"     in df_s else 0,
-                                     df_s["Pts/$"].max()     if "Pts/$"     in df_s else 1),
+                "T.Val":     (False, df_s["T.Val"].min()     if "T.Val"     in df_s else 0, df_s["T.Val"].max()     if "T.Val"     in df_s else 1),
+                "Leverage":  (False, df_s["Leverage"].min()  if "Leverage"  in df_s else 0, df_s["Leverage"].max()  if "Leverage"  in df_s else 1),
+                "Pts/$":     (False, df_s["Pts/$"].min()     if "Pts/$"     in df_s else 0, df_s["Pts/$"].max()     if "Pts/$"     in df_s else 1),
             }
             for col, (rev, cmin, cmax) in col_cfg.items():
                 if col in df_s.columns:
@@ -582,31 +613,52 @@ with tab_optimizer:
                     )
             return styles
 
-        styled = pool_display.style.apply(style_pool, axis=None)
-
-        # Build column_config for formatting (applied on top of the styling)
-        col_config = {}
-        if "Salary" in pool_display.columns:
-            col_config["Salary"] = st.column_config.NumberColumn("Salary", format="$%d")
-        if "Ownership" in pool_display.columns:
-            col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%")
-        if "ID" in pool_display.columns:
-            col_config["ID"] = st.column_config.NumberColumn("ID", format="%d")
+        # ── Column config for data_editor ─────────────────────────────────────
+        col_config = {
+            "Lock":    st.column_config.CheckboxColumn("🔒", help="Force into every lineup", width="small"),
+            "Exclude": st.column_config.CheckboxColumn("🚫", help="Remove from all lineups", width="small"),
+            "Player":  st.column_config.TextColumn("Player", disabled=True),
+            "Position":st.column_config.TextColumn("Position", disabled=True),
+            "Team":    st.column_config.TextColumn("Team", disabled=True),
+        }
+        if "Opponent"  in edit_view.columns: col_config["Opponent"]  = st.column_config.TextColumn("Opponent",  disabled=True)
+        if "Salary"    in edit_view.columns: col_config["Salary"]    = st.column_config.NumberColumn("Salary",    format="$%d")
+        if "Ownership" in edit_view.columns: col_config["Ownership"] = st.column_config.NumberColumn("Ownership", format="%.1f%%")
+        if "ID"        in edit_view.columns: col_config["ID"]        = st.column_config.NumberColumn("ID",        format="%d",  disabled=True)
         for c in ["DK Points", "Value", "T.Val", "Leverage", "Pts/$"]:
-            if c in pool_display.columns:
+            if c in edit_view.columns:
                 col_config[c] = st.column_config.NumberColumn(c, format="%.1f")
 
-        st.dataframe(styled, use_container_width=True, hide_index=True, column_config=col_config)
+        styled_edit = edit_view.style.apply(style_pool, axis=None)
 
-        # ── Lock / Exclude ────────────────────────────────────────────────────
-        st.markdown('<div class="section-header">🔒 Lock & Exclude Players</div>', unsafe_allow_html=True)
-        col_lock, col_excl = st.columns(2)
-        with col_lock:
-            st.markdown("**Lock Players** — Force into every lineup")
-            locked = st.multiselect("Select players to lock", options=sorted(df["Player"].tolist()), default=[])
-        with col_excl:
-            st.markdown("**Exclude Players** — Remove from all lineups")
-            excluded = st.multiselect("Select players to exclude", options=sorted(df["Player"].tolist()), default=[])
+        edited = st.data_editor(
+            styled_edit,
+            use_container_width=True,
+            hide_index=True,
+            column_config=col_config,
+            key="pool_editor",
+            num_rows="fixed",
+        )
+
+        # Write edits back to the full working_df (by player name)
+        if edited is not None:
+            for _, erow in edited.iterrows():
+                pname = erow.get("Player")
+                if pname is None:
+                    continue
+                mask = st.session_state.edited_pool["Player"] == pname
+                for col in edited.columns:
+                    if col in st.session_state.edited_pool.columns:
+                        st.session_state.edited_pool.loc[mask, col] = erow[col]
+
+        # Derive locked/excluded from the full edited pool
+        full_edited = st.session_state.edited_pool
+        locked   = full_edited[full_edited["Lock"]    == True]["Player"].tolist()
+        excluded = full_edited[full_edited["Exclude"] == True]["Player"].tolist()
+
+        # Use edited pool as the dataframe for the optimizer
+        df = full_edited.drop(columns=["Lock", "Exclude"], errors="ignore").copy()
+        player_lookup = build_player_lookup(df)
 
         # ── Exposure Limits ───────────────────────────────────────────────────
         max_exposure_dict = {}
@@ -712,6 +764,7 @@ with tab_optimizer:
                         excluded_players=excluded,
                         min_exposure=min_exposure_dict,
                         max_exposure=max_exposure_dict,
+                        variance_pct=variance_pct / 100.0,
                     )
                 except ValueError as e:
                     st.error(f"❌ Optimizer Error: {e}")
