@@ -82,6 +82,13 @@ st.markdown("""
     }
     div[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
 
+    /* Prevent sidebar buttons from wrapping */
+    section[data-testid="stSidebar"] button {
+        white-space: nowrap !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
     /* ── Lineup Card Grid ── */
     .cards-grid {
         display: grid;
@@ -446,16 +453,14 @@ with st.sidebar:
             st.rerun()
 
         # Delete pool button
-        del_col, _ = st.columns([1, 2])
-        with del_col:
-            if st.button("🗑️ Remove Pool", key="del_pool"):
-                del st.session_state.csv_store[selected_pool]
-                if selected_pool == st.session_state.active_csv_name:
-                    remaining = list(st.session_state.csv_store.keys())
-                    st.session_state.active_csv_name = remaining[0] if remaining else None
-                st.session_state.edited_pool = None
-                st.session_state.pool_csv_hash = None
-                st.rerun()
+        if st.button("🗑️ Remove Pool", key="del_pool", use_container_width=False):
+            del st.session_state.csv_store[selected_pool]
+            if selected_pool == st.session_state.active_csv_name:
+                remaining = list(st.session_state.csv_store.keys())
+                st.session_state.active_csv_name = remaining[0] if remaining else None
+            st.session_state.edited_pool = None
+            st.session_state.pool_csv_hash = None
+            st.rerun()
 
     # Expose active CSV as uploaded_file-compatible object for the rest of the app
     import io
