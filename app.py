@@ -1054,12 +1054,36 @@ with tab_optimizer:
             dk_slot_cols = ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"]
             avail_dk = [c for c in dk_slot_cols if c in results_df.columns]
             if avail_dk:
+                # Build ID lookup from player_lookup
+                id_lookup = {
+                    name: int(data.get("ID", 0))
+                    for name, data in player_lookup.items()
+                    if data.get("ID") not in (None, "", 0)
+                }
+                has_ids = bool(id_lookup)
+
+                dk_df = results_df[avail_dk].copy()
+                if has_ids:
+                    for col in avail_dk:
+                        dk_df[col] = dk_df[col].map(lambda n: id_lookup.get(n, n))
+
                 with dl2:
                     st.download_button(
                         "📥 Download DraftKings Upload Format",
-                        data=results_df[avail_dk].to_csv(index=False),
+                        data=dk_df.to_csv(index=False),
                         file_name="ufl_lineups_dk.csv", mime="text/csv",
+                        help="Player IDs used for upload." if has_ids else "No ID column found — using player names.",
                     )
+
+            # ── Clear Lineups ──────────────────────────────────────────────────
+            st.markdown("---")
+            clear_col, _ = st.columns([1, 4])
+            with clear_col:
+                if st.button("🗑️ Clear Lineups", key="clear_lineups", use_container_width=True):
+                    st.session_state.last_results = []
+                    st.session_state.gen_checked = {}
+                    st.session_state.cb_gen_gen += 1
+                    st.rerun()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
