@@ -392,36 +392,56 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                 checked = st.checkbox("Select", value=current, key=key)
                 checked_state[lineup_num] = checked
 
-                # Multi-tag input — multiselect from known tags + text input for new
+                # Multi-tag input
+                # Strategy: initialise the widget key from lineup_tags ONCE on first
+                # render, then let Streamlit own the value via the key. Never pass
+                # `default=` after first render — that's what was resetting tags.
+                widget_key     = f"{id_prefix}_tag_{lineup_num}"
+                newtag_key     = f"{id_prefix}_newtag_{lineup_num}"
+
+                # Seed session state from lineup_tags if widget not yet rendered
+                if widget_key not in st.session_state:
+                    stored = st.session_state.lineup_tags.get(lineup_num, [])
+                    if not isinstance(stored, list):
+                        stored = [stored] if stored else []
+                    st.session_state[widget_key] = stored
+
+                # Build options = union of all known tags + whatever this lineup has
                 all_known_tags = sorted({
                     t for tags in st.session_state.lineup_tags.values()
                     for t in (tags if isinstance(tags, list) else ([tags] if tags else []))
                     if t
-                })
-                current_tags = st.session_state.lineup_tags.get(lineup_num, [])
-                if not isinstance(current_tags, list):
-                    current_tags = [current_tags] if current_tags else []
-                valid_defaults = [t for t in current_tags if t in all_known_tags]
-                new_tags = st.multiselect(
+                } | set(st.session_state[widget_key]))
+
+                st.multiselect(
                     "Tags",
                     options=all_known_tags,
-                    default=valid_defaults,
+                    key=widget_key,
                     placeholder="Select or type below...",
-                    key=f"{id_prefix}_tag_{lineup_num}",
                     label_visibility="collapsed",
                 )
-                new_tag_input = st.text_input(
+
+                # Text input for typing a brand-new tag not yet in the list
+                if newtag_key not in st.session_state:
+                    st.session_state[newtag_key] = ""
+                st.text_input(
                     "New tag",
-                    value="",
                     placeholder="Type new tag + Enter",
-                    key=f"{id_prefix}_newtag_{lineup_num}",
+                    key=newtag_key,
                     label_visibility="collapsed",
                 )
-                if new_tag_input.strip():
-                    combined = list(dict.fromkeys(new_tags + [new_tag_input.strip()]))
+
+                # Merge typed tag into the multiselect value and persist
+                current_selected = st.session_state.get(widget_key, [])
+                typed = st.session_state.get(newtag_key, "").strip()
+                if typed and typed not in current_selected:
+                    combined = list(dict.fromkeys(current_selected + [typed]))
+                    st.session_state[widget_key] = combined
+                    st.session_state[newtag_key] = ""
                 else:
-                    combined = new_tags
-                # Store under canonical lineup_num regardless of prefix
+                    combined = current_selected
+
+                # Always write back to lineup_tags so other parts of the app see it
                 st.session_state.lineup_tags[lineup_num] = combined
 
 
