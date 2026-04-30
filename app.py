@@ -27,6 +27,8 @@ if "saved_checked" not in st.session_state:
     st.session_state.saved_checked = {} # lineup_num -> bool
 if "lineup_tags" not in st.session_state:
     st.session_state.lineup_tags = {}   # lineup_num -> tag string
+if "global_lineup_counter" not in st.session_state:
+    st.session_state.global_lineup_counter = 0  # ever-increasing, unique across runs
 if "saved_display_metric" not in st.session_state:
     st.session_state.saved_display_metric = None  # chosen metric on saved tab
 if "cb_gen_gen" not in st.session_state:
@@ -47,6 +49,8 @@ if "csv_store" not in st.session_state:
     st.session_state.csv_store = {}       # name -> raw CSV bytes
 if "active_csv_name" not in st.session_state:
     st.session_state.active_csv_name = None
+if "global_lineup_counter" not in st.session_state:
+    st.session_state.global_lineup_counter = 0  # ever-increasing lineup ID
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -311,8 +315,13 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                 total_own = sum(raw_owns)
 
             saved_badge_html = '<span class="saved-badge">✓ Saved</span>' if already_saved else ""
-            tag_val  = st.session_state.lineup_tags.get(lineup_num, "")
-            tag_html = f'<span class="tag-badge">{tag_val}</span>' if tag_val else ""
+            raw_tags = st.session_state.lineup_tags.get(lineup_num, [])
+            if isinstance(raw_tags, str):
+                raw_tags = [raw_tags] if raw_tags else []
+            tag_html = " ".join(
+                f'<span class="tag-badge">{t}</span>'
+                for t in raw_tags if t
+            )
 
             player_rows = ""
             for slot in SLOT_COLS:
@@ -383,17 +392,37 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                 checked = st.checkbox("Select", value=current, key=key)
                 checked_state[lineup_num] = checked
 
-                # Tag input — shown on both gen and saved tabs
-                current_tag = st.session_state.lineup_tags.get(lineup_num, "")
-                new_tag = st.text_input(
-                    "🏷️ Tag",
-                    value=current_tag,
-                    placeholder="e.g. Cash, GPP...",
+                # Multi-tag input — multiselect from known tags + text input for new
+                all_known_tags = sorted({
+                    t for tags in st.session_state.lineup_tags.values()
+                    for t in (tags if isinstance(tags, list) else ([tags] if tags else []))
+                    if t
+                })
+                current_tags = st.session_state.lineup_tags.get(lineup_num, [])
+                if not isinstance(current_tags, list):
+                    current_tags = [current_tags] if current_tags else []
+                valid_defaults = [t for t in current_tags if t in all_known_tags]
+                new_tags = st.multiselect(
+                    "Tags",
+                    options=all_known_tags,
+                    default=valid_defaults,
+                    placeholder="Select or type below...",
                     key=f"{id_prefix}_tag_{lineup_num}",
                     label_visibility="collapsed",
                 )
-                # Store under the canonical lineup_num regardless of prefix
-                st.session_state.lineup_tags[lineup_num] = new_tag
+                new_tag_input = st.text_input(
+                    "New tag",
+                    value="",
+                    placeholder="Type new tag + Enter",
+                    key=f"{id_prefix}_newtag_{lineup_num}",
+                    label_visibility="collapsed",
+                )
+                if new_tag_input.strip():
+                    combined = list(dict.fromkeys(new_tags + [new_tag_input.strip()]))
+                else:
+                    combined = new_tags
+                # Store under canonical lineup_num regardless of prefix
+                st.session_state.lineup_tags[lineup_num] = combined
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -823,6 +852,32 @@ with tab_optimizer:
                 except Exception as e:
                     st.error(f"❌ Unexpected error: {e}")
                     st.stop()
+            # Remap Lineup # to globally unique numbers so run 2 lineup #1
+            # never collides with run 1 lineup #1 in tags/saved state
+            base = st.session_state.global_lineup_counter
+            remapped = []
+            for i, lu in enumerate(results):
+                new_lu = dict(lu)
+                new_lu["Lineup #"] = base + i + 1
+                remapped.append(new_lu)
+            st.session_state.global_lineup_counter = base + len(results)
+            # Clear old gen tags so previous tags don't bleed into new lineups
+            old_nums = {r.get("Lineup #") for r in st.session_state.last_results}
+            for k in list(st.session_state.lineup_tags.keys()):
+                if k in old_nums:
+                    del st.session_state.lineup_tags[k]
+            results = remapped
+            # Assign globally unique lineup numbers (avoids collisions between runs)
+            base = st.session_state.global_lineup_counter
+            for i, lu in enumerate(results):
+                lu["Lineup #"] = base + i + 1
+            st.session_state.global_lineup_counter += len(results)
+
+            # Clear old gen tag widget keys so new lineups start untagged
+            keys_to_del = [k for k in st.session_state if k.startswith("gen_tag_")]
+            for k in keys_to_del:
+                del st.session_state[k]
+
             st.session_state.last_results = results
 
         # ── Results ───────────────────────────────────────────────────────────
@@ -948,16 +1003,20 @@ with tab_optimizer:
             )
 
             # ── Tag filter ────────────────────────────────────────────────────
-            def get_gen_tag(num):
+            def get_gen_tags(num):
+                """Return list of tags for a generated lineup."""
                 widget_key = f"gen_tag_{num}"
                 if widget_key in st.session_state:
-                    return str(st.session_state[widget_key]).strip()
-                return str(st.session_state.lineup_tags.get(num, "")).strip()
+                    val = st.session_state[widget_key]
+                    return val if isinstance(val, list) else ([val] if val else [])
+                stored = st.session_state.lineup_tags.get(num, [])
+                return stored if isinstance(stored, list) else ([stored] if stored else [])
 
             gen_all_tags = sorted({
-                get_gen_tag(r.get("Lineup #"))
+                tag
                 for r in results
-                if get_gen_tag(r.get("Lineup #"))
+                for tag in get_gen_tags(r.get("Lineup #"))
+                if tag
             })
             gen_tag_filter = None
             if gen_all_tags:
@@ -974,7 +1033,7 @@ with tab_optimizer:
             if gen_tag_filter:
                 sorted_results = [
                     lu for lu in sorted_results
-                    if get_gen_tag(lu.get("Lineup #")) == gen_tag_filter
+                    if gen_tag_filter in get_gen_tags(lu.get("Lineup #"))
                 ]
                 st.markdown(
                     f'<div class="info-box" style="margin:0.4rem 0 0.6rem">Showing <b>{len(sorted_results)}</b> of {actual} lineups tagged <b>"{gen_tag_filter}"</b></div>',
@@ -994,12 +1053,31 @@ with tab_optimizer:
                 1 for num, v in st.session_state.gen_checked.items()
                 if v and num in {r.get("Lineup #") for r in results}
             )
-            already_saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
-            to_save_now = [
-                r for r in results
-                if st.session_state.gen_checked.get(r.get("Lineup #"), False)
-                and r.get("Lineup #") not in already_saved_nums
-            ]
+            # Global unique lineup numbers mean no ID collisions between runs.
+            # If identical players already saved, merge tags instead of duplicating.
+            def _lineup_players(lu):
+                return tuple(lu.get(s, "") for s in SLOT_COLS)
+
+            existing_players = {_lineup_players(r): r.get("Lineup #")
+                                for r in st.session_state.saved_lineups}
+            to_save_now = []
+            for r in results:
+                if not st.session_state.gen_checked.get(r.get("Lineup #"), False):
+                    continue
+                player_key = _lineup_players(r)
+                new_tags = get_gen_tags(r.get("Lineup #"))
+                if player_key in existing_players:
+                    # Merge tags into the already-saved lineup
+                    existing_num = existing_players[player_key]
+                    existing_tags = st.session_state.lineup_tags.get(existing_num, [])
+                    if not isinstance(existing_tags, list):
+                        existing_tags = [existing_tags] if existing_tags else []
+                    merged = list(dict.fromkeys(existing_tags + [t for t in new_tags if t]))
+                    st.session_state.lineup_tags[existing_num] = merged
+                else:
+                    # Copy current tags to the new saved lineup's number
+                    st.session_state.lineup_tags[r.get("Lineup #")] = list(new_tags)
+                    to_save_now.append(r)
             save_col, _ = st.columns([1, 3])
             with save_col:
                 if st.button(
@@ -1196,16 +1274,20 @@ with tab_saved:
         # Read tags from both session_state.lineup_tags AND from the widget
         # keys directly (f"saved_tag_{num}") so tags entered this render
         # are immediately available without waiting for a rerun.
-        def get_tag(num):
+        def get_tags(num):
+            """Return list of tags for a saved lineup."""
             widget_key = f"saved_tag_{num}"
             if widget_key in st.session_state:
-                return str(st.session_state[widget_key]).strip()
-            return str(st.session_state.lineup_tags.get(num, "")).strip()
+                val = st.session_state[widget_key]
+                return val if isinstance(val, list) else ([val] if val else [])
+            stored = st.session_state.lineup_tags.get(num, [])
+            return stored if isinstance(stored, list) else ([stored] if stored else [])
 
         all_tags = sorted({
-            get_tag(r.get("Lineup #"))
+            tag
             for r in saved
-            if get_tag(r.get("Lineup #"))
+            for tag in get_tags(r.get("Lineup #"))
+            if tag
         })
         tag_filter = None
         if all_tags:
@@ -1231,7 +1313,7 @@ with tab_saved:
         if tag_filter:
             sorted_saved = [
                 lu for lu in sorted_saved
-                if get_tag(lu.get("Lineup #")) == tag_filter
+                if tag_filter in get_tags(lu.get("Lineup #"))
             ]
 
         n_showing = len(sorted_saved)
@@ -1290,9 +1372,12 @@ with tab_saved:
 
         # Attach tags column to export
         export_df = saved_df.copy()
-        export_df.insert(1, "Tag", export_df.get("Lineup #", pd.Series(dtype=str)).map(
-            lambda n: st.session_state.lineup_tags.get(n, "")
-        ))
+        def _tags_str(n):
+            t = st.session_state.lineup_tags.get(n, [])
+            if isinstance(t, list):
+                return ", ".join(filter(None, t))
+            return str(t) if t else ""
+        export_df.insert(1, "Tags", export_df.get("Lineup #", pd.Series(dtype=str)).map(_tags_str))
 
         with dl_a:
             st.download_button(
@@ -1303,9 +1388,28 @@ with tab_saved:
 
         avail_dk = [c for c in ["QB", "RB", "WR/TE 1", "WR/TE 2", "FLEX 1", "FLEX 2", "DST"] if c in saved_df.columns]
         if avail_dk:
+            # Build ID lookup from uploaded pool if available
+            saved_id_lookup = {}
+            if uploaded_file is not None:
+                try:
+                    saved_id_lookup = {
+                        name: int(data.get("ID", 0))
+                        for name, data in card_player_lookup.items()
+                        if data.get("ID") not in (None, "", 0)
+                    }
+                except Exception:
+                    pass
+            saved_has_ids = bool(saved_id_lookup)
+            saved_dk_df = saved_df[avail_dk].copy()
+            if saved_has_ids:
+                for col in avail_dk:
+                    saved_dk_df[col] = saved_dk_df[col].map(
+                        lambda n: saved_id_lookup.get(n, n)
+                    )
             with dl_b:
                 st.download_button(
                     "📥 Download DraftKings Upload Format",
-                    data=saved_df[avail_dk].to_csv(index=False),
+                    data=saved_dk_df.to_csv(index=False),
                     file_name="ufl_saved_lineups_dk.csv", mime="text/csv",
+                    help="Player IDs used." if saved_has_ids else "No ID column — using names.",
                 )
