@@ -1123,6 +1123,54 @@ with tab_optimizer:
                     st.session_state.cb_gen_gen += 1
                     st.rerun()
 
+            # ── Bulk Tag ──────────────────────────────────────────────────────
+            if n_checked_now > 0:
+                btag_col1, btag_col2, _ = st.columns([2, 1, 3])
+                with btag_col1:
+                    all_gen_known_tags = sorted({
+                        t for tags in st.session_state.lineup_tags.values()
+                        for t in (tags if isinstance(tags, list) else ([tags] if tags else []))
+                        if t
+                    })
+                    bulk_tag_sel = st.multiselect(
+                        "🏷️ Bulk tag selected",
+                        options=all_gen_known_tags,
+                        placeholder="Choose or type a tag...",
+                        key="gen_bulk_tag_select",
+                        label_visibility="collapsed",
+                    )
+                    bulk_new_tag = st.text_input(
+                        "New bulk tag",
+                        placeholder="Or type a new tag...",
+                        key="gen_bulk_new_tag",
+                        label_visibility="collapsed",
+                    )
+                with btag_col2:
+                    st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+                    tags_to_apply = list(dict.fromkeys(
+                        bulk_tag_sel + ([bulk_new_tag.strip()] if bulk_new_tag.strip() else [])
+                    ))
+                    if st.button(
+                        f"Apply Tag to {n_checked_now}",
+                        key="gen_bulk_tag_apply",
+                        disabled=(not tags_to_apply),
+                        use_container_width=True,
+                    ):
+                        for r in results:
+                            num = r.get("Lineup #")
+                            if st.session_state.gen_checked.get(num, False):
+                                existing = st.session_state.lineup_tags.get(num, [])
+                                if not isinstance(existing, list):
+                                    existing = [existing] if existing else []
+                                merged = list(dict.fromkeys(existing + tags_to_apply))
+                                st.session_state.lineup_tags[num] = merged
+                                # Also update widget key if it exists so card badge refreshes
+                                wk = f"gen_tag_{num}"
+                                if wk in st.session_state:
+                                    st.session_state[wk] = merged
+                        del st.session_state["gen_bulk_new_tag"]
+                        st.rerun()
+
             # ── Summary ───────────────────────────────────────────────────────
             st.markdown('<div class="section-header">📊 Summary</div>', unsafe_allow_html=True)
             s1, s2, s3, s4 = st.columns(4)
@@ -1289,6 +1337,56 @@ with tab_saved:
                 st.session_state.saved_lineups = keep
                 st.session_state.saved_checked = {}
                 st.rerun()
+
+        # ── Bulk Tag (saved tab) ──────────────────────────────────────────────
+        n_saved_checked = sum(1 for v in st.session_state.saved_checked.values() if v)
+        if n_saved_checked > 0:
+            sbtag_col1, sbtag_col2, _ = st.columns([2, 1, 3])
+            with sbtag_col1:
+                all_saved_known_tags = sorted({
+                    t for tags in st.session_state.lineup_tags.values()
+                    for t in (tags if isinstance(tags, list) else ([tags] if tags else []))
+                    if t
+                })
+                saved_bulk_tag_sel = st.multiselect(
+                    "🏷️ Bulk tag selected",
+                    options=all_saved_known_tags,
+                    placeholder="Choose or type a tag...",
+                    key="saved_bulk_tag_select",
+                    label_visibility="collapsed",
+                )
+                saved_bulk_new_tag = st.text_input(
+                    "New bulk tag",
+                    placeholder="Or type a new tag...",
+                    key="saved_bulk_new_tag",
+                    label_visibility="collapsed",
+                )
+            with sbtag_col2:
+                st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+                saved_tags_to_apply = list(dict.fromkeys(
+                    saved_bulk_tag_sel + ([saved_bulk_new_tag.strip()] if saved_bulk_new_tag.strip() else [])
+                ))
+                if st.button(
+                    f"Apply Tag to {n_saved_checked}",
+                    key="saved_bulk_tag_apply",
+                    disabled=(not saved_tags_to_apply),
+                    use_container_width=True,
+                ):
+                    for r in saved:
+                        num = r.get("Lineup #")
+                        if st.session_state.saved_checked.get(num, False):
+                            existing = st.session_state.lineup_tags.get(num, [])
+                            if not isinstance(existing, list):
+                                existing = [existing] if existing else []
+                            merged = list(dict.fromkeys(existing + saved_tags_to_apply))
+                            st.session_state.lineup_tags[num] = merged
+                            # Update widget key so card badge refreshes immediately
+                            wk = f"saved_tag_{num}"
+                            if wk in st.session_state:
+                                del st.session_state[wk]
+                    if "saved_bulk_new_tag" in st.session_state:
+                        del st.session_state["saved_bulk_new_tag"]
+                    st.rerun()
 
         # ── Sort controls ─────────────────────────────────────────────────────
         sort_col1, sort_col2, _ = st.columns([1, 1, 5])
