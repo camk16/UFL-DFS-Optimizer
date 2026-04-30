@@ -1078,31 +1078,10 @@ with tab_optimizer:
                 1 for num, v in st.session_state.gen_checked.items()
                 if v and num in {r.get("Lineup #") for r in results}
             )
-            # Global unique lineup numbers mean no ID collisions between runs.
-            # If identical players already saved, merge tags instead of duplicating.
+            # ── Save Selected ──────────────────────────────────────────────────
             def _lineup_players(lu):
                 return tuple(lu.get(s, "") for s in SLOT_COLS)
 
-            existing_players = {_lineup_players(r): r.get("Lineup #")
-                                for r in st.session_state.saved_lineups}
-            to_save_now = []
-            for r in results:
-                if not st.session_state.gen_checked.get(r.get("Lineup #"), False):
-                    continue
-                player_key = _lineup_players(r)
-                new_tags = get_gen_tags(r.get("Lineup #"))
-                if player_key in existing_players:
-                    # Merge tags into the already-saved lineup
-                    existing_num = existing_players[player_key]
-                    existing_tags = st.session_state.lineup_tags.get(existing_num, [])
-                    if not isinstance(existing_tags, list):
-                        existing_tags = [existing_tags] if existing_tags else []
-                    merged = list(dict.fromkeys(existing_tags + [t for t in new_tags if t]))
-                    st.session_state.lineup_tags[existing_num] = merged
-                else:
-                    # Copy current tags to the new saved lineup's number
-                    st.session_state.lineup_tags[r.get("Lineup #")] = list(new_tags)
-                    to_save_now.append(r)
             save_col, _ = st.columns([1, 3])
             with save_col:
                 if st.button(
@@ -1112,6 +1091,30 @@ with tab_optimizer:
                     type="primary",
                     use_container_width=True,
                 ):
+                    # All tag reads and writes happen HERE — only on actual click,
+                    # never on passive rerenders, so existing saved tags are safe.
+                    existing_players = {_lineup_players(r): r.get("Lineup #")
+                                        for r in st.session_state.saved_lineups}
+                    to_save_now = []
+                    for r in results:
+                        if not st.session_state.gen_checked.get(r.get("Lineup #"), False):
+                            continue
+                        player_key = _lineup_players(r)
+                        new_tags = get_gen_tags(r.get("Lineup #"))
+                        if player_key in existing_players:
+                            # Same players already saved — merge tags only
+                            existing_num = existing_players[player_key]
+                            existing_tags = st.session_state.lineup_tags.get(existing_num, [])
+                            if not isinstance(existing_tags, list):
+                                existing_tags = [existing_tags] if existing_tags else []
+                            merged = list(dict.fromkeys(
+                                existing_tags + [t for t in new_tags if t]
+                            ))
+                            st.session_state.lineup_tags[existing_num] = merged
+                        else:
+                            # New lineup — snapshot tags at save time
+                            st.session_state.lineup_tags[r.get("Lineup #")] = list(new_tags)
+                            to_save_now.append(r)
                     st.session_state.saved_lineups.extend(to_save_now)
                     st.session_state.gen_checked = {}
                     st.session_state.cb_gen_gen += 1
