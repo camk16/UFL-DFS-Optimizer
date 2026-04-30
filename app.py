@@ -886,10 +886,13 @@ with tab_optimizer:
                 new_lu["Lineup #"] = base + i + 1
                 remapped.append(new_lu)
             st.session_state.global_lineup_counter = base + len(results)
-            # Clear old gen tags so previous tags don't bleed into new lineups
-            old_nums = {r.get("Lineup #") for r in st.session_state.last_results}
+            # Clear tags for old generated lineups — but ONLY if they haven't
+            # been saved. Saved lineups share the same lineup number and must
+            # keep their tags in lineup_tags.
+            saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
+            old_nums   = {r.get("Lineup #") for r in st.session_state.last_results}
             for k in list(st.session_state.lineup_tags.keys()):
-                if k in old_nums:
+                if k in old_nums and k not in saved_nums:
                     del st.session_state.lineup_tags[k]
             results = remapped
             # Assign globally unique lineup numbers (avoids collisions between runs)
