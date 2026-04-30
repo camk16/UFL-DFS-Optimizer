@@ -877,29 +877,18 @@ with tab_optimizer:
                 except Exception as e:
                     st.error(f"❌ Unexpected error: {e}")
                     st.stop()
-            # Remap Lineup # to globally unique numbers so run 2 lineup #1
-            # never collides with run 1 lineup #1 in tags/saved state
-            base = st.session_state.global_lineup_counter
-            remapped = []
-            for i, lu in enumerate(results):
-                new_lu = dict(lu)
-                new_lu["Lineup #"] = base + i + 1
-                remapped.append(new_lu)
-            st.session_state.global_lineup_counter = base + len(results)
-            # Clear tags for old generated lineups — but ONLY if they haven't
-            # been saved. Saved lineups share the same lineup number and must
-            # keep their tags in lineup_tags.
-            saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
-            old_nums   = {r.get("Lineup #") for r in st.session_state.last_results}
-            for k in list(st.session_state.lineup_tags.keys()):
-                if k in old_nums and k not in saved_nums:
-                    del st.session_state.lineup_tags[k]
-            results = remapped
             # Assign globally unique lineup numbers (avoids collisions between runs)
             base = st.session_state.global_lineup_counter
             for i, lu in enumerate(results):
                 lu["Lineup #"] = base + i + 1
             st.session_state.global_lineup_counter += len(results)
+
+            # Clear tags for old generated lineups — but ONLY if not saved
+            saved_nums = {r.get("Lineup #") for r in st.session_state.saved_lineups}
+            old_nums   = {r.get("Lineup #") for r in st.session_state.last_results}
+            for k in list(st.session_state.lineup_tags.keys()):
+                if k in old_nums and k not in saved_nums:
+                    del st.session_state.lineup_tags[k]
 
             # Clear old gen tag widget keys so new lineups start untagged
             keys_to_del = [k for k in st.session_state if k.startswith("gen_tag_")]
@@ -1032,13 +1021,13 @@ with tab_optimizer:
 
             # ── Tag filter ────────────────────────────────────────────────────
             def get_gen_tags(num):
-                """Return list of tags for a generated lineup."""
-                widget_key = f"gen_tag_{num}"
-                if widget_key in st.session_state:
-                    val = st.session_state[widget_key]
-                    return val if isinstance(val, list) else ([val] if val else [])
+                """Return list of tags for a generated lineup.
+                Always read from lineup_tags — the tag widget writes back there
+                on every render so it is always the current source of truth."""
                 stored = st.session_state.lineup_tags.get(num, [])
-                return stored if isinstance(stored, list) else ([stored] if stored else [])
+                if not isinstance(stored, list):
+                    stored = [stored] if stored else []
+                return stored
 
             gen_all_tags = sorted({
                 tag
@@ -1409,13 +1398,12 @@ with tab_saved:
         # keys directly (f"saved_tag_{num}") so tags entered this render
         # are immediately available without waiting for a rerun.
         def get_tags(num):
-            """Return list of tags for a saved lineup."""
-            widget_key = f"saved_tag_{num}"
-            if widget_key in st.session_state:
-                val = st.session_state[widget_key]
-                return val if isinstance(val, list) else ([val] if val else [])
+            """Return list of tags for a saved lineup.
+            Always read from lineup_tags — single source of truth."""
             stored = st.session_state.lineup_tags.get(num, [])
-            return stored if isinstance(stored, list) else ([stored] if stored else [])
+            if not isinstance(stored, list):
+                stored = [stored] if stored else []
+            return stored
 
         all_tags = sorted({
             tag
