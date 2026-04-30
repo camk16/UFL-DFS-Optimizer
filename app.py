@@ -393,56 +393,61 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                 checked_state[lineup_num] = checked
 
                 # Multi-tag input
-                # Strategy: initialise the widget key from lineup_tags ONCE on first
-                # render, then let Streamlit own the value via the key. Never pass
-                # `default=` after first render — that's what was resetting tags.
-                widget_key     = f"{id_prefix}_tag_{lineup_num}"
-                newtag_key     = f"{id_prefix}_newtag_{lineup_num}"
+                # Rule: NEVER write to a widget key after the widget has rendered —
+                # Streamlit raises StreamlitAPIException. Instead, lineup_tags is the
+                # single source of truth. Widget keys seed from it on first render
+                # only. After render, we read from the widget key to update lineup_tags.
+                widget_key = f"{id_prefix}_tag_{lineup_num}"
+                newtag_key = f"{id_prefix}_newtag_{lineup_num}"
 
-                # Seed session state from lineup_tags if widget not yet rendered
-                if widget_key not in st.session_state:
-                    stored = st.session_state.lineup_tags.get(lineup_num, [])
-                    if not isinstance(stored, list):
-                        stored = [stored] if stored else []
-                    st.session_state[widget_key] = stored
+                # Read current tags from lineup_tags (authoritative store)
+                stored = st.session_state.lineup_tags.get(lineup_num, [])
+                if not isinstance(stored, list):
+                    stored = [stored] if stored else []
 
-                # Build options = union of all known tags + whatever this lineup has
+                # Build options from all known tags + this lineup's current tags
                 all_known_tags = sorted({
                     t for tags in st.session_state.lineup_tags.values()
                     for t in (tags if isinstance(tags, list) else ([tags] if tags else []))
                     if t
-                } | set(st.session_state[widget_key]))
+                } | set(stored))
 
-                st.multiselect(
-                    "Tags",
-                    options=all_known_tags,
-                    key=widget_key,
-                    placeholder="Select or type below...",
-                    label_visibility="collapsed",
-                )
+                # Multiselect — pass default only when key not yet in session state
+                if widget_key not in st.session_state:
+                    selected = st.multiselect(
+                        "Tags", options=all_known_tags,
+                        default=stored,
+                        key=widget_key,
+                        placeholder="Select tags...",
+                        label_visibility="collapsed",
+                    )
+                else:
+                    selected = st.multiselect(
+                        "Tags", options=all_known_tags,
+                        key=widget_key,
+                        placeholder="Select tags...",
+                        label_visibility="collapsed",
+                    )
 
-                # Text input for typing a brand-new tag not yet in the list
-                if newtag_key not in st.session_state:
-                    st.session_state[newtag_key] = ""
-                st.text_input(
+                # Text input for a new tag not yet in the list
+                new_tag_typed = st.text_input(
                     "New tag",
-                    placeholder="Type new tag + Enter",
+                    placeholder="Type new tag + Enter to add",
                     key=newtag_key,
                     label_visibility="collapsed",
                 )
 
-                # Merge typed tag into the multiselect value and persist
-                current_selected = st.session_state.get(widget_key, [])
+                # Merge typed tag: update lineup_tags and clear the text box next run
+                # Do NOT write to widget_key — write only to lineup_tags
                 typed = st.session_state.get(newtag_key, "").strip()
-                if typed and typed not in current_selected:
-                    combined = list(dict.fromkeys(current_selected + [typed]))
-                    st.session_state[widget_key] = combined
-                    st.session_state[newtag_key] = ""
+                if typed and typed not in selected:
+                    final_tags = list(dict.fromkeys(selected + [typed]))
+                    # Clear the text input next render by resetting its key
+                    del st.session_state[newtag_key]
                 else:
-                    combined = current_selected
+                    final_tags = list(selected)
 
-                # Always write back to lineup_tags so other parts of the app see it
-                st.session_state.lineup_tags[lineup_num] = combined
+                st.session_state.lineup_tags[lineup_num] = final_tags
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
