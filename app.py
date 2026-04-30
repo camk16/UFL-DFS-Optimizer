@@ -1164,11 +1164,14 @@ with tab_optimizer:
                                     existing = [existing] if existing else []
                                 merged = list(dict.fromkeys(existing + tags_to_apply))
                                 st.session_state.lineup_tags[num] = merged
-                                # Also update widget key if it exists so card badge refreshes
+                                # Delete widget key so it re-seeds from lineup_tags on next render
                                 wk = f"gen_tag_{num}"
                                 if wk in st.session_state:
-                                    st.session_state[wk] = merged
-                        del st.session_state["gen_bulk_new_tag"]
+                                    del st.session_state[wk]
+                        if "gen_bulk_new_tag" in st.session_state:
+                            del st.session_state["gen_bulk_new_tag"]
+                        if "gen_bulk_tag_select" in st.session_state:
+                            del st.session_state["gen_bulk_tag_select"]
                         st.rerun()
 
             # ── Summary ───────────────────────────────────────────────────────
@@ -1386,6 +1389,8 @@ with tab_saved:
                                 del st.session_state[wk]
                     if "saved_bulk_new_tag" in st.session_state:
                         del st.session_state["saved_bulk_new_tag"]
+                    if "saved_bulk_tag_select" in st.session_state:
+                        del st.session_state["saved_bulk_tag_select"]
                     st.rerun()
 
         # ── Sort controls ─────────────────────────────────────────────────────
