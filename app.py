@@ -393,61 +393,63 @@ def render_lineup_cards(lineups, player_lookup, optimize_by, saved_set,
                 checked_state[lineup_num] = checked
 
                 # Multi-tag input
-                # Rule: NEVER write to a widget key after the widget has rendered —
-                # Streamlit raises StreamlitAPIException. Instead, lineup_tags is the
-                # single source of truth. Widget keys seed from it on first render
-                # only. After render, we read from the widget key to update lineup_tags.
+                # lineup_tags is the ONLY source of truth — never overwritten
+                # passively. The multiselect uses on_change to write back only
+                # when the user explicitly changes the selection.
                 widget_key = f"{id_prefix}_tag_{lineup_num}"
                 newtag_key = f"{id_prefix}_newtag_{lineup_num}"
 
-                # Read current tags from lineup_tags (authoritative store)
                 stored = st.session_state.lineup_tags.get(lineup_num, [])
                 if not isinstance(stored, list):
                     stored = [stored] if stored else []
 
-                # Build options from all known tags + this lineup's current tags
                 all_known_tags = sorted({
                     t for tags in st.session_state.lineup_tags.values()
                     for t in (tags if isinstance(tags, list) else ([tags] if tags else []))
                     if t
                 } | set(stored))
 
-                # Multiselect — pass default only when key not yet in session state
+                # Seed widget key from lineup_tags if not yet present
                 if widget_key not in st.session_state:
-                    selected = st.multiselect(
-                        "Tags", options=all_known_tags,
-                        default=stored,
-                        key=widget_key,
-                        placeholder="Select tags...",
-                        label_visibility="collapsed",
-                    )
-                else:
-                    selected = st.multiselect(
-                        "Tags", options=all_known_tags,
-                        key=widget_key,
-                        placeholder="Select tags...",
-                        label_visibility="collapsed",
-                    )
+                    st.session_state[widget_key] = stored
 
-                # Text input for a new tag not yet in the list
-                new_tag_typed = st.text_input(
+                # on_change: only called when user explicitly changes the multiselect
+                def _on_tag_change(num=lineup_num, wk=widget_key):
+                    val = st.session_state.get(wk, [])
+                    if not isinstance(val, list):
+                        val = [val] if val else []
+                    st.session_state.lineup_tags[num] = val
+
+                st.multiselect(
+                    "Tags", options=all_known_tags,
+                    key=widget_key,
+                    placeholder="Select tags...",
+                    label_visibility="collapsed",
+                    on_change=_on_tag_change,
+                )
+
+                # Text input for a brand-new tag — on_change adds it
+                def _on_newtag(num=lineup_num, wk=widget_key, nk=newtag_key):
+                    typed = st.session_state.get(nk, "").strip()
+                    if not typed:
+                        return
+                    current = st.session_state.lineup_tags.get(num, [])
+                    if not isinstance(current, list):
+                        current = [current] if current else []
+                    if typed not in current:
+                        merged = list(dict.fromkeys(current + [typed]))
+                        st.session_state.lineup_tags[num] = merged
+                        # Sync widget key too so multiselect shows the new tag
+                        st.session_state[wk] = merged
+                    st.session_state[nk] = ""
+
+                st.text_input(
                     "New tag",
                     placeholder="Type new tag + Enter to add",
                     key=newtag_key,
                     label_visibility="collapsed",
+                    on_change=_on_newtag,
                 )
-
-                # Merge typed tag: update lineup_tags and clear the text box next run
-                # Do NOT write to widget_key — write only to lineup_tags
-                typed = st.session_state.get(newtag_key, "").strip()
-                if typed and typed not in selected:
-                    final_tags = list(dict.fromkeys(selected + [typed]))
-                    # Clear the text input next render by resetting its key
-                    del st.session_state[newtag_key]
-                else:
-                    final_tags = list(selected)
-
-                st.session_state.lineup_tags[lineup_num] = final_tags
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -1215,6 +1217,8 @@ with tab_optimizer:
                 if has_ids:
                     for col in avail_dk:
                         dk_df[col] = dk_df[col].map(lambda n: id_lookup.get(n, n))
+                # Rename numbered cols to plain DK format (two identical "WR/TE" and "FLEX" headers)
+                dk_df.columns = ["QB", "RB", "WR/TE", "WR/TE", "FLEX", "FLEX", "DST"][:len(dk_df.columns)]
 
                 with dl2:
                     st.download_button(
@@ -1528,6 +1532,7 @@ with tab_saved:
                     saved_dk_df[col] = saved_dk_df[col].map(
                         lambda n: saved_id_lookup.get(n, n)
                     )
+            saved_dk_df.columns = ["QB", "RB", "WR/TE", "WR/TE", "FLEX", "FLEX", "DST"][:len(saved_dk_df.columns)]
             with dl_b:
                 st.download_button(
                     "📥 Download DraftKings Upload Format",
